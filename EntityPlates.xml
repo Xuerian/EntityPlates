@@ -118,6 +118,18 @@ xsi:schemaLocation="http://www.red5studios.com/ ../../../../schemas/component.xs
 			<Group name="min_plate" dimensions="center-x:50%; center-y:50%; width:18; height:18" style="alpha:0;">
 				<Group name="shadow" dimensions="left:1; top:1; width:100%; height:100%" />
 				<Group name="art" dimensions="dock:fill" />
+				<Group name="name" dimensions="center-x:50%; center-y:50%; width:100%; height:18;">
+					<Text name="shadow" dimensions="left:21; top:1; width:100%; height:100%" class="text" style="font:Demi_8;alpha:0.3;" />
+					<Text name="text" dimensions="left:20; top:0; width:100%; height:100%" class="text" style="font:Demi_8;alpha:0.8;" />
+				</Group>
+				<Group name="army" dimensions="right:_; center-y:50%; width:100%; height:18;">
+					<Text name="shadow" dimensions="right:1; top:1; width:100%; height:100%" class="text" style="font:Demi_8;alpha:0.3; halign:right;" />
+					<Text name="text" dimensions="right:0; top:0; width:100%; height:100%" class="text" style="font:Demi_8;alpha:0.8; halign:right;" />
+				</Group>
+				<Group name="dev_icon" dimensions="right:-3; top:3; width:8; height:12;">
+					<StillArt name="shadow" dimensions="left:1; top:1; width:100%; height:100%" style="texture:icons; region:r5_logo; tint:#000000;" />
+					<StillArt name="art" dimensions="dock:fill" style="texture:icons; region:r5_logo;" />
+				</Group>
 			</Group>
 			<Group name="full_plate" dimensions="center-x:50%; center-y:50%; width:100%; height:48" style="alpha:0;">
 				<Group name="title" dimensions="center-x:50%; center-y:50%-13; width:100%; height:8;" style="alpha:0;">

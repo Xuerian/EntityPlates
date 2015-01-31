@@ -1036,10 +1036,26 @@ function PLATE_CreateElements(PLATE)
 	local GROUP = Component.CreateWidget(io_PlateStyle, PLATE.FRAME);
 	PLATE.GROUP = GROUP;
 	
+	GROUP = GROUP:GetChild("min_plate");
 	PLATE.MIN_PLATE = {
-		GROUP = GROUP:GetChild("min_plate"),
-		ART = MultiArt.Create(GROUP:GetChild("min_plate.art")),
-		SHADOW = MultiArt.Create(GROUP:GetChild("min_plate.shadow")),
+		GROUP = GROUP,
+		ART = MultiArt.Create(GROUP:GetChild("art")),
+		SHADOW = MultiArt.Create(GROUP:GetChild("shadow")),
+		NAME = {
+			GROUP = GROUP:GetChild("name"),
+			TEXT = GROUP:GetChild("name.text"),
+			SHADOW = GROUP:GetChild("name.shadow"),
+		},
+		ARMY = {
+			GROUP = GROUP:GetChild("army"),
+			TEXT = GROUP:GetChild("army.text"),
+			SHADOW = GROUP:GetChild("army.shadow"),
+		},
+		DEV_ICON = {
+			GROUP = GROUP:GetChild("dev_icon"),
+			ART = GROUP:GetChild("dev_icon.art"),
+			SHADOW = GROUP:GetChild("dev_icon.shadow"),
+		},
 	};
 	
 	GROUP = PLATE.GROUP:GetChild("full_plate");
@@ -1089,6 +1105,9 @@ function PLATE_CreateElements(PLATE)
 	-- only for iterating over to set opacity
 	PLATE.SHADOWS = {
 		MIN_ICON = PLATE.MIN_PLATE.SHADOW,
+		MIN_NAME = PLATE.MIN_PLATE.NAME.SHADOW,
+		MIN_ARMY = PLATE.MIN_PLATE.ARMY.SHADOW,
+		MIN_DEV_ICON = PLATE.MIN_PLATE.DEV_ICON.SHADOW,
 		NAME = PLATE.FULL_PLATE.NAME.SHADOW,
 		TITLE = PLATE.FULL_PLATE.TITLE.SHADOW,
 		ICON = PLATE.FULL_PLATE.ICON.SHADOW,
@@ -1225,10 +1244,67 @@ local function ElementColor(element_name, rules)
 		return io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship]
 	end 
 end
+
+local wrap_pairs = {
+	["["] = "]",
+	["{"] = "}",
+	["("] = ")",
+	["<"] = ">",
+	["\\"] = "/",
+	["/"] = "\\",
+}
+
+local wrap_singles = {
+	["|"] = true,
+	["-"] = true,
+	["="] = true,
+	["*"] = true,
+	["\\"] = true,
+	["/"] = true,
+	["\""] = true,
+	[" "] = true,
+	["_"] = true,
+}
+
+-- Given a full player name like "[RED5] Pezz", returns:
+--  "Pezz", "RED5"
+-- Given "NotPezz", returns:
+--  "NotPezz", ""
+local function GetNameAndCleanArmyTag(playername)
+	local army, name
+	if unicode.sub(playername, 1, 1) == "[" then
+		army, name = unicode.match(playername, "%[(.+)%] (%S+)")
+		if unicode.len(army) > 3 then
+			local a, b = unicode.sub(army, 1, 1), unicode.sub(army, -1)
+			if (a == b and wrap_singles[a]) or wrap_pairs[a] == b then
+				army = unicode.sub(army, 2, -2)
+			end
+		end
+	end
+	return name or playername, army or ''
+end
+
 function PLATE_UpdateInfo(PLATE)
 	local info = Game.GetTargetInfo(PLATE.entityId) or {};
 	local rules = EntityRules.GetRules(info);
 	
+
+
+	local MIN = PLATE.MIN_PLATE
+	if info.type == "character" and not info.isNpc then
+		local name, army = GetNameAndCleanArmyTag(rules.name)
+		MIN.NAME.GROUP:Show(true)
+		MIN.NAME.TEXT:SetText(name)
+		MIN.NAME.SHADOW:SetText(name)
+		MIN.ARMY.GROUP:Show(true)
+		MIN.ARMY.TEXT:SetText(army)
+		MIN.ARMY.SHADOW:SetText(army)
+	else
+		MIN.NAME.GROUP:Show(false)
+		MIN.ARMY.GROUP:Show(false)
+	end
+
+
 	PLATE.FULL_PLATE.NAME.TEXT:SetText(rules.name);
 	PLATE.FULL_PLATE.NAME.SHADOW:SetText(rules.name);
 	
@@ -1264,8 +1340,10 @@ function PLATE_UpdateInfo(PLATE)
 
 	if (info.isDev) then
 		PLATE.FULL_PLATE.DEV_ICON.GROUP:Show(true);
+		PLATE.MIN_PLATE.DEV_ICON.GROUP:Show(true);
 	else
 		PLATE.FULL_PLATE.DEV_ICON.GROUP:Show(false);
+		PLATE.MIN_PLATE.DEV_ICON.GROUP:Show(false);
 	end
 
 	local vitals = Game.GetTargetVitals(PLATE.entityId) or {};
@@ -1376,6 +1454,9 @@ function PLATE_UpdateLayout(PLATE)
 		if (has_dev_icon) then
 			PLATE.FULL_PLATE.DEV_ICON.GROUP:SetDims("right:" .. offset .. "; width:_;");
 			offset = PLATE.FULL_PLATE.DEV_ICON.GROUP:GetDims().left.offset;
+			PLATE.MIN_PLATE.ARMY.GROUP:SetDims("right:2; center-y:50%; width:100%; height:18;")
+		else
+			PLATE.MIN_PLATE.ARMY.GROUP:SetDims("right:13; center-y:50%; width:100%; height:18;")
 		end
 
 		if (has_icon) then
@@ -1391,6 +1472,8 @@ function PLATE_UpdateLayout(PLATE)
 	-- colors
 	local name_color = ElementColor("name", rules)
 	PLATE.FULL_PLATE.NAME.TEXT:SetTextColor(name_color)
+	PLATE.MIN_PLATE.NAME.TEXT:SetTextColor(name_color)
+	PLATE.MIN_PLATE.ARMY.TEXT:SetTextColor(name_color)
 
 	if (has_title) then
 		PLATE.FULL_PLATE.TITLE.TEXT:SetTextColor(ElementColor("title", rules));
