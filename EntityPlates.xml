@@ -1,0 +1,174 @@
+
+<?xml version="1.0" encoding="utf-8"?>
+<Component xmlns="http://www.red5studios.com/"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="http://www.red5studios.com/ ../../../../schemas/component.xsd">
+	<Info
+		title="Entity Plates"
+		author="Red 5 Studios"
+		description="standard name plates that appear over entities in the game"
+		url="http://www.red5studios.com/"
+		uiVersion="1000"
+	/>
+
+	<Events>
+		<Event name="ON_COMPONENT_LOAD"						bind="OnComponentLoad" />
+		<Event name="ON_PLAYER_READY"						bind="OnPlayerReady" />
+		<Event name="ON_SPECTATOR_MODE"						bind="OnSpectatorMode" />
+		<Event name="ON_SPECTATE_PLAYER"					bind="OnSpectatePlayer" />
+
+		<Event name="ON_TEAM_CHANGED"						bind="OnTeamChanged"/>
+		<Event name="ON_BATTLEFRAME_CHANGED"				bind="OnBattleframeChanged"/>
+		<Event name="ON_LEVEL_CHANGED"						bind="OnLevelChanged"/>
+
+		<Event name="ON_SIN_VIEW"							bind="OnFullView"/>
+
+		<Event name="ON_HIT_TARGET_CONFIRM"					bind="OnHitTarget" />
+		<Event name="ON_SPECTATED_SIMULATED_HIT"			bind="OnSimulatedHit"/>
+		
+		<Event name="ON_UI_ENTITY_AVAILABLE"				bind="OnEntityAvailable"/>
+		<Event name="ON_UI_ENTITY_LOST"						bind="OnEntityLost"/>
+		<Event name="ON_UI_ENTITY_FOCUS"					bind="OnEntityFocus"/>
+
+		<Event name="ON_CHARACTER_VITALS_CHANGED"			bind="OnEntityVitalsChanged"/>
+		<Event name="ON_DEPLOYABLE_VITALS_CHANGED"			bind="OnEntityVitalsChanged"/>
+		<Event name="ON_VEHICLE_VITALS_CHANGED"				bind="OnEntityVitalsChanged"/>
+		<Event name="ON_CARRYABLE_OBJECT_VITALS_CHANGED"	bind="OnEntityVitalsChanged"/>
+
+		<Event name="ON_CHARACTER_STATUS_CHANGED"			bind="OnEntityStatusChanged"/>
+		<Event name="ON_DEPLOYABLE_STATUS_CHANGED"			bind="OnEntityStatusChanged"/>
+		<Event name="ON_VEHICLE_STATUS_CHANGED"				bind="OnEntityStatusChanged"/>
+		<Event name="ON_CARRYABLE_OBJECT_STATUS_CHANGED"	bind="OnEntityStatusChanged"/>
+
+		<Event name="ON_CHARACTER_INFO_CHANGED"				bind="OnEntityInfoChanged"/>
+		<Event name="ON_DEPLOYABLE_INFO_CHANGED"			bind="OnEntityInfoChanged"/>
+		<Event name="ON_VEHICLE_INFO_CHANGED"				bind="OnEntityInfoChanged"/>
+		<Event name="ON_CARRYABLE_OBJECT_INFO_CHANGED"		bind="OnEntityInfoChanged"/>
+
+		<Event name="MY_HIDE_ENTITY_PLATE"					bind="OnHideEntity"/>
+	</Events>
+
+	<Textures>
+		<Texture name="Plate" src="./textures/EntityPlates.dds" premultiplied="true">
+			<Region name="lock" top="0" bottom="128" left="0" right="128" />
+			<Region name="lock_mh" top="0" bottom="128" left="128" right="0" />
+			<Region name="lock_mv" top="128" bottom="0" left="0" right="128" />
+			<Region name="lock_md" top="128" bottom="0" left="128" right="0" />
+			<Region name="bar" top="130" bottom="142" left="0" right="128" />
+		</Texture>
+		
+		<Texture name="AAG" src="./textures/AAG.dds" premultiplied="false">
+			<Region name="healthbar" top="87" bottom="99" left="1" right="162" />
+			<Region name="healthbarBG" top="103" bottom="115" left="1" right="162" />
+			<Region name="LevelChevronBG" top="1" bottom="55" left="204" right="252" />
+			<Region name="textShadow" top="1" bottom="83" left="1" right="200" />
+		</Texture>
+		
+		<Texture name="LevelArrow" src="components/MainUI/HUD/EXPBar/LevelArrow.png" premultiplied="false">
+			<Region name="down" top="0" bottom="6" left="0" right="9"/>
+			<Region name="up" top="6" bottom="0" left="0" right="9"/>
+		</Texture>
+		
+		<Texture name="healthbar" src="./textures/healthbar.png" premultiplied="false"/>
+		<Texture name="healthbarBG" src="./textures/healthbarBG.png" premultiplied="false"/>
+		<Texture name="LevelChevronBG" src="./textures/LevelChevronBG.png" premultiplied="false"/>
+		<Texture name="textShadow" src="./textures/textShadow.png" premultiplied="false"/>
+		<Texture name="ConSkull" src="./textures/ConSkull.png" premultiplied="false"/>
+		
+		<Texture name="ChevronFG" src="./textures/ChevronFG.png" premultiplied="false"/>
+		<Texture name="ChevronBG" src="./textures/ChevronBG.png" premultiplied="false"/>
+	</Textures>
+
+	<Styles>
+		<StyleSheet name="health_fill" parent="#StillArt">
+			texture:healthbar;
+			tint:#FF0000;
+			shadow:0.0;
+			hotpoint:1;
+			exposure:1;
+		</StyleSheet>
+		<StyleSheet name="health_empty" parent="health_fill">
+			exposure:0;
+			alpha:1;
+			shadow:0.0;
+			texture:healthbarBG;
+			tint:damage;
+			hotpoint:1;
+		</StyleSheet>
+		<StyleSheet name="name" parent="#Text">
+			font:Demi_12o;
+			halign:left;
+			valign:center;
+			wrap:false;
+			clip:false;
+		</StyleSheet>
+		<StyleSheet name="title" parent="name">
+			font:Demi_9o;
+		</StyleSheet>
+		<StyleSheet name="level">
+			texture:glyph_aag;
+			kerning-mult:0.8;
+			halign:center;
+			valign:center;
+		</StyleSheet>
+	</Styles>
+
+	<BluePrints>
+		<BluePrint name="plate" instantiable="true">
+			<Group name="min_plate" dimensions="center-x:23%; bottom:65%; height:16; aspect:1.0"/>
+			<StillArt name="full_plate" dimensions="bottom:100%; center-x:23%+130; width:512; height:64" style="texture:colors; region:transparent; alpha:0"/>
+		</BluePrint>
+		
+		<BluePrint name="full_plate" instantiable="true">
+			<StillArt dimensions="top:0; bottom:100%-18; left:0; right:206" style="texture:textShadow;"/>
+			<Group name="level" dimensions="left:-2; top:0; height:53; width:49;" style="visible:false">
+				<StillArt dimensions="dock:fill" style="texture:ChevronBG; alpha:0.35"/>
+				<StillArt name="bg" dimensions="dock:fill" style="texture:ChevronFG;"/>
+				<GlyphMap name="glyph" dimensions="center-x:50%-2; center-y:50%-6; width:100%; height:100%;" class="level" lineheight="18" charset="1234567890"/>
+				<StillArt name="level_arrow" dimensions="center-x:50%-1; width:10; center-y:50%; height:6" style="texture:LevelArrow; region:down; visible:false"/>
+				<StillArt name="skull_icon" dimensions="center-x:50%-1; center-y:50%-8; width:18; height:18;" style="texture:ConSkull; visible:false; tint:con_skull;"/>
+			</Group>
+			<Group name="header" dimensions="left:38; right:100%; height:26; top:1">
+				<Group name="icon" dimensions="center-y:50%; left:0; height:20; aspect:1"/>
+				<Group name="text" dimensions="left:20; right:100%; center-y:50%; height:100%">
+					<Text name="name" dimensions="left:0; top:0; right:100%; height:12;" class="name"/>
+					<Text name="title" dimensions="left:0; bottom:100%; right:100%; height:8" class="title" style="visible:false"/>
+				</Group>
+			</Group>
+			<Group name="vitals" dimensions="left:40; top:33; width:169; height:12;" style="alpha:0">
+				<StillArt name="dev_icon" dimensions="right:-3; aspect:0.88; center-y:50%; height:12" style="texture:icons; region:r5_logo; visible:true"/>
+				<StillArt dimensions="dock:fill" class="health_empty"/>
+				<Mask name="empty" maskdims="right:100%; width:0; height:100%" dimensions="dock:fill" class="health_empty" style="visible:false"/>
+				<Mask name="fill" maskdims="dock:fill" dimensions="dock:fill" class="health_fill"/>
+				<Mask name="overfill" maskdims="left:0%; width:0; height:100%" dimensions="dock:fill" class="health_fill" style="tint:overheal; glow:healing; hotpoint:.9"/>
+				<Group name="delta" dimensions="right:100%; width:0; height:100%">
+					<StillArt name="fill" dimensions="dock:fill" style="texture:colors; region:white; colors:damage; hotpoint:0.5; exposure:1.0"/>
+				</Group>
+				<StillArt name="flash" dimensions="dock:fill" class="health_fill" style="tint:#FFFFFF; alpha:0"/>
+				
+
+
+			</Group>
+		</BluePrint>
+	</BluePrints>
+
+	<Frames>
+		<!-- frame never shows up -->
+		<FullscreenFrame name="map_info" visible="false" texture="error">
+			<Children>
+				<!-- this is fostered into MapMarker:GetBody() when looked at -->
+				<Group id="map_info" dimensions="dock:fill">
+					<Group name="detail" dimensions="left:0; height:96; width:96; top:20">
+						<Group name="icon_group" dimensions="center-x:50%; center-y:50%; width:75%; height:75%"/>
+					</Group>
+					<Group name="readouts" dimensions="top:20; right:100%+58; width:200%; height:96">
+						<Text name="title" dimensions="left:50%+35t+1; top:00; width:50%; height:10" style="font:Wide_10B; valign:center; halign:left;"/>
+						<Text name="name" dimensions="left:50%+35t; center-y:25%; width:50%; height:22" style="font:Wide_15B; valign:center; halign:left;"/>
+						<Shadow id="shadow_vitals" dimensions="left:50%+42t; width:60; height:15; top:40;" />
+					</Group>
+				</Group>
+			</Children>
+		</FullscreenFrame>
+	</Frames>
+
+</Component>
