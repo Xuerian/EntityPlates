@@ -1,9 +1,8 @@
-
 -- ------------------------------------------
 -- Entity Plates
 --   by: John Su
+--   modifications by: TuffGhost
 -- ------------------------------------------
-
 require "unicode";
 require "math";
 require "table";
@@ -12,22 +11,16 @@ require "lib/lib_Callback2";
 require "lib/lib_MapMarker";
 require "lib/lib_Liaison";
 require "lib/lib_math";
-require "lib/lib_MultiArt"
-require "lib/lib_HudManager"
+require "lib/lib_MultiArt";
+require "lib/lib_HudManager";
+require "lib/lib_Vector";
 
 -- ------------------------------------------
 -- CONSTANTS
 -- ------------------------------------------
 local MAP_INFO_GROUP = Component.GetWidget("map_info");
 local MAP_INFO_VITALS = Component.GetWidget("shadow_vitals");
-
-local w_MAP_INFO
-
-local PRIORITY_NONE = 0;	-- I don't care
-local PRIORITY_LOW = 1;		-- deployables, npc's; things that are not urgent
-local PRIORITY_MEDIUM = 2;	-- enemies, allies; combat significant
-local PRIORITY_HIGH = 3;	-- squadmates
-
+local w_MAP_INFO;
 local SPECTATOR_TEAM = "1";
 
 -- for use in entity suppression
@@ -35,20 +28,36 @@ local SUPPRESS_HUD = "hud";	-- don't show HUD plate
 local SUPPRESS_MAP = "map";	-- don't show radar/map entries
 local SUPPRESS_ALL = "all";	-- don't show ANYTHING
 
-local PRIORITY_SETTINGS = {
-[PRIORITY_NONE]		= {cull_alpha=0},
-[PRIORITY_LOW]		= {cull_alpha=0},
-[PRIORITY_MEDIUM]	= {cull_alpha=0.8},
-[PRIORITY_HIGH]		= {cull_alpha=0.8, always_visible=true, docks_to_edge=true},
-}
-
 local IGNORE_TYPES = {
 	["loot"]		= true,
 	["sin_object"]	= true,
 	["Globe"]		= true,
 }
 
-local MEDIMODE_MAX_RANGE = 80;	-- in meters
+local ARES_ITEMS = {
+	["Accord Datapad"]				= true,
+	["Crashed Thumper Part"]		= true,
+	["Crystite Core"]				= true,
+	["Disruption Defuse Pin Black"]	= true,
+	["Disruption Defuse Pin Red"]	= true,
+	["Disruption Defuse Pin White"]	= true,
+	["Drill Parts"]					= true,
+	["Medical Supplies"]			= true,
+	["Tainted Crystite"]			= true,
+}
+
+local PRIORITY_NONE = 0;	-- I don't care
+local PRIORITY_LOW = 1;		-- deployables, npc's; things that are not urgent
+local PRIORITY_MEDIUM = 2;	-- enemies, allies; combat significant
+local PRIORITY_HIGH = 3;	-- squadmates
+
+local PRIORITY_SETTINGS = {
+	[PRIORITY_NONE]		= {cull_alpha=0, docks_to_edge=false},
+	[PRIORITY_LOW]		= {cull_alpha=0, docks_to_edge=false},
+	[PRIORITY_MEDIUM]	= {cull_alpha=0.8, docks_to_edge=false},
+	[PRIORITY_HIGH]		= {cull_alpha=0.8, docks_to_edge=true},
+}
+
 
 local RELEASE_PLATE_FOCUS_DELAY = 1.5;
 
@@ -75,200 +84,483 @@ local g_sinView	= false;
 local g_ShowHud = true;
 local g_spectating = false;
 local g_spectating_follow = true;
-local g_lastSinActionTime = nil;	-- last time SIN view was activated
 local g_lastFocusedPlate = nil;
 local g_focused_MARKER = nil;
-local g_medimode = false;	-- medic on the prowl, looking for injured allies
+local g_mediMode = MEDIMODES.NONE;	-- medic on the prowl, looking for injured allies
 local g_maxPatients = 20;	-- max patients to show
 local CYCLE_DisposePlates;
+local CYCLE_MediModePulse;
+local CYCLE_HighVisPulse;
 local CB2_RecyclePlates = Callback2.Create();
-local CB2_MedimodePulse = Callback2.Create();
 local CB2_ReleaseFocusedPlate = Callback2.Create();
-
 local g_is_challenge_ready = false;
 
+local g_Loaded = false;
+local g_doUpdateStyle = false;
+local g_doUpdateLayout = false;
+local g_doUpdateConfiguration = false;
 
 -- ------------------------------------------
 -- INTERFACE OPTIONS
 -- ------------------------------------------
-require "lib/lib_InterfaceOptions"
-local io_Enabled = true
-local io_Alpha = 1
-local io_UseArchTypeIcon = false
+require "lib/lib_InterfaceOptions";
+
+local io_Enabled = true;
+local io_PlateAlpha = 1.0;
+local io_ShadowAlpha = 0.8;
+
+local io_PlateStyle = "modern";
+local c_Modern = "modern";
+local c_Beta = "beta";
+
+local io_UseArchetypeIcon = false
+local io_HideFullHealthbars = false;
+local io_HideLevelsForNPCs = true;
+local io_MinimizeDockedPlates = true;
+
+local io_ShowTitles = "always";
+local io_ShowLevels = "always";
+local c_Always = "always";
+local c_SinViewOnly = "sin_view_only";
+local c_Never = "never";
+
+local io_MediModeHealthThreshold = 1.0;
+local io_MediModeMaxRange = 80;
+
+local io_MediModeEngineer = "mine";
+local c_AllDeployables = "all";
+local c_MyDeployablesOnly = "mine";
+local c_NoDeployables = "none";
+
+local io_HighVisiblity = true;
+local io_HighVisRanges = {
+	["VENDORS"] = {label = "Vendors", range = 100},
+	["GLIDER_PADS"] = {label = "Glider Pads", range = 100},
+	["BATTLEFRAME_STATIONS"] = {label = "Battleframe Stations", range = 100},
+	["ARES_ITEMS"] = {label = "ARES Mission Items", range = 100},
+}
+
+local io_RelationshipColors = {
+	friendly	= Component.LookupColor("friendly").rgb,
+	hostile		= Component.LookupColor("hostile").rgb,
+	neutral		= Component.LookupColor("neutral").rgb,
+	npc			= Component.LookupColor("npc").rgb,
+	squad		= Component.LookupColor("squad").rgb,
+	platoon		= Component.LookupColor("platoon").rgb,
+	army		= Component.LookupColor("army").rgb,
+	me			= Component.LookupColor("me").rgb,
+};
+
+local io_StageColors = {
+	Component.LookupColor("con_grey").rgb,
+	Component.LookupColor("con_green").rgb,
+	Component.LookupColor("con_yellow").rgb,
+	Component.LookupColor("con_red").rgb,
+	Component.LookupColor("con_skull").rgb,
+};
+
+local io_ColorSettings = {
+	name = "relationship",
+	title = "relationship",
+	level = "relationship",
+	icon = "stage",
+	health_bar = "stage",
+};
+
+local c_UseRelationshipColor = "relationship";
+local c_UseStageColor = "stage";
 
 
+do -- interface options
+	InterfaceOptions.SaveVersion(1.27);
+	InterfaceOptions.NotifyOnLoaded(true);
 
+	InterfaceOptions.AddCheckBox({id="ENABLED", label_key="ENTITY_PLATES_ENABLED", default=io_Enabled})
 
-InterfaceOptions.SaveVersion(1.4)
-InterfaceOptions.AddCheckBox({id="ENABLED", label_key="ENTITY_PLATES_ENABLED", default=io_Enabled})
-InterfaceOptions.AddSlider({id="PLATE_ALPHA", label_key="ENTITY_PLATES_ALPHA", default=io_Alpha, min=0, max=1, inc=0.01, format="%0.0f", multi=100, suffix="%"})
-InterfaceOptions.AddCheckBox({id="ARCHTYPE_ICON", label_key="USE_ARCHTYPE_ICON", default=io_UseArchTypeIcon})
+	InterfaceOptions.AddChoiceMenu({id="PLATE_STYLE", label="Plate Style", default=io_PlateStyle});
+		InterfaceOptions.AddChoiceEntry({menuId="PLATE_STYLE", label="Beta", val=c_Beta});
+		InterfaceOptions.AddChoiceEntry({menuId="PLATE_STYLE", label="Modern", val=c_Modern});
 
+	InterfaceOptions.AddSlider({id="PLATE_ALPHA", label="Plate Opacity", default=io_PlateAlpha, min=0, max=1, inc=0.01, format="%0.0f", multi=100, suffix="%"})
+	InterfaceOptions.AddSlider({id="SHADOW_ALPHA", label="Shadow Opacity", default=io_ShadowAlpha, min=0, max=1, inc=0.01, format="%0.0f", multi=100, suffix="%"})
 
+	InterfaceOptions.AddCheckBox({id="USE_ARCHETYPE_ICON", label="Use Archetype Frame Icon", default=io_UseArchetypeIcon});
 
+	InterfaceOptions.AddChoiceMenu({id="SHOW_TITLES", label="Show Titles", default=io_ShowTitles});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_TITLES", label="Always", val=c_Always});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_TITLES", label="SIN View Only", val=c_SinViewOnly});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_TITLES", label="Never", val=c_Never});
 
+	InterfaceOptions.AddChoiceMenu({id="SHOW_LEVELS", label="Show Levels", default=io_ShowLevels});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_LEVELS", label="Always", val=c_Always});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_LEVELS", label="SIN View Only", val=c_SinViewOnly});
+		InterfaceOptions.AddChoiceEntry({menuId="SHOW_LEVELS", label="Never", val=c_Never});
+	
+	InterfaceOptions.AddCheckBox({id="MINIMIZE_DOCKED_PLATES", label="Hide Titles/Levels For Docked Plates", default=io_MinimizeDockedPlates})
+		
+	InterfaceOptions.AddCheckBox({id="HIDE_LEVELS_FOR_NPCS", label="Hide Levels For NPCs", default=io_HideLevelsForNPCs})
+	InterfaceOptions.AddCheckBox({id="HIDE_FULL_HEALTHBARS", label="Hide Full Health Bars", default=io_HideFullHealthbars})
 
+	InterfaceOptions.StartGroup({id="MEDIMODE_SETTINGS", label="MediMode Settings"});
+		InterfaceOptions.AddChoiceMenu({id="MEDIMODE_ENGINEER", label="Enable Engineer's MediMode For", default=io_MediModeEngineer});
+			InterfaceOptions.AddChoiceEntry({menuId="MEDIMODE_ENGINEER", label="All Deployables", val=c_AllDeployables});
+			InterfaceOptions.AddChoiceEntry({menuId="MEDIMODE_ENGINEER", label="My Deployables Only", val=c_MyDeployablesOnly});
+			InterfaceOptions.AddChoiceEntry({menuId="MEDIMODE_ENGINEER", label="No Deployables (Disable)", val=c_NoDeployables});
+		InterfaceOptions.AddSlider({id="MEDIMODE_HEALTH_THRESHOLD", label="Health Threshold", default=io_MediModeHealthThreshold, min=0, max=1, inc=0.01, format="%0.0f", multi=100, suffix="%"})
+		InterfaceOptions.AddSlider({id="MEDIMODE_MAX_RANGE", label="Maximum Range", default=io_MediModeMaxRange, min=0, max=150, inc=1, suffix="m"})
+	InterfaceOptions.StopGroup();
 
+	InterfaceOptions.StartGroup({id="HIGH_VISIBILITY", label="Increased Visibility", checkbox=true, default=io_HighVisiblity});
+		InterfaceOptions.AddSlider({id="HIGH_VIS_ARES_ITEMS", label=io_HighVisRanges["ARES_ITEMS"].label, default=io_HighVisRanges["ARES_ITEMS"].range, min=0, inc=10, max=200, suffix="m"})
+		InterfaceOptions.AddSlider({id="HIGH_VIS_BATTLEFRAME_STATIONS", label=io_HighVisRanges["BATTLEFRAME_STATIONS"].label, default=io_HighVisRanges["BATTLEFRAME_STATIONS"].range, min=0, inc=10, max=200, suffix="m"})
+		InterfaceOptions.AddSlider({id="HIGH_VIS_GLIDER_PADS", label=io_HighVisRanges["GLIDER_PADS"].label, default=io_HighVisRanges["GLIDER_PADS"].range, min=0, inc=10, max=200, suffix="m"})
+		InterfaceOptions.AddSlider({id="HIGH_VIS_VENDORS", label=io_HighVisRanges["VENDORS"].label, default=io_HighVisRanges["VENDORS"].range, min=0, inc=10, max=200, suffix="m"})
+	InterfaceOptions.StopGroup();
 
+	InterfaceOptions.StartGroup({label="Plate Color Settings", subtab={"Colors"}});
+		InterfaceOptions.AddChoiceMenu({id="COLOR_SETTINGS_NAME", label="Name", default=io_ColorSettings.name, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_NAME", label="Use Relationship Color", val=c_UseRelationshipColor, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_NAME", label="Use Difficulty Color", val=c_UseStageColor, subtab={"Colors"}});
+
+		InterfaceOptions.AddChoiceMenu({id="COLOR_SETTINGS_TITLE", label="Title", default=io_ColorSettings.title, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_TITLE", label="Use Relationship Color", val=c_UseRelationshipColor, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_TITLE", label="Use Difficulty Color", val=c_UseStageColor, subtab={"Colors"}});
+
+		InterfaceOptions.AddChoiceMenu({id="COLOR_SETTINGS_LEVEL", label="Level", default=io_ColorSettings.level, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_LEVEL", label="Use Relationship Color", val=c_UseRelationshipColor, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_LEVEL", label="Use Difficulty Color", val=c_UseStageColor, subtab={"Colors"}});
+
+		InterfaceOptions.AddChoiceMenu({id="COLOR_SETTINGS_ICON", label="Icon", default=io_ColorSettings.icon, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_ICON", label="Use Relationship Color", val=c_UseRelationshipColor, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_ICON", label="Use Difficulty Color", val=c_UseStageColor, subtab={"Colors"}});
+
+		InterfaceOptions.AddChoiceMenu({id="COLOR_SETTINGS_HEALTH_BAR", label="Health Bar", default=io_ColorSettings.health_bar, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_HEALTH_BAR", label="Use Relationship Color", val=c_UseRelationshipColor, subtab={"Colors"}});
+			InterfaceOptions.AddChoiceEntry({menuId="COLOR_SETTINGS_HEALTH_BAR", label="Use Difficulty Color", val=c_UseStageColor, subtab={"Colors"}});
+	InterfaceOptions.StopGroup({subtab={"Colors"}});
+
+	InterfaceOptions.StartGroup({label="Relationship Colors", subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_FRIENDLY", label="Friendly", default={tint=io_RelationshipColors.friendly}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_HOSTILE", label="Hostile", default={tint=io_RelationshipColors.hostile}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_NEUTRAL", label="Neutral", default={tint=io_RelationshipColors.neutral}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_NPC", label="NPC", default={tint=io_RelationshipColors.npc}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_SQUAD", label="Squad", default={tint=io_RelationshipColors.squad}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_PLATOON", label="Platoon", default={tint=io_RelationshipColors.platoon}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_ARMY", label="Army", default={tint=io_RelationshipColors.army}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_RELATIONSHIP_ME", label="Me", default={tint=io_RelationshipColors.me}, subtab={"Colors"}});
+	InterfaceOptions.StopGroup({subtab={"Colors"}});
+
+	InterfaceOptions.StartGroup({label="Difficulty Colors", subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_STAGE_1", label="Stage 1", default={tint=io_StageColors[1]}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_STAGE_2", label="Stage 2", default={tint=io_StageColors[2]}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_STAGE_3", label="Stage 3", default={tint=io_StageColors[3]}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_STAGE_4", label="Stage 4", default={tint=io_StageColors[4]}, subtab={"Colors"}});
+		InterfaceOptions.AddColorPicker({id="COLOR_PICKER_STAGE_5", label="Stage 5", default={tint=io_StageColors[5]}, subtab={"Colors"}});
+	InterfaceOptions.StopGroup({subtab={"Colors"}});
+end
 
 function OnOptionChange(id, val)
 	if id == "ENABLED" then
-		io_Enabled = val
+		io_Enabled = val;
 		for _, PLATE in pairs(w_PLATES) do
-			PLATE.GROUP:Show(io_Enabled)
+			PLATE.GROUP:Show(io_Enabled);
 		end
-		SetOptionsAvailability()
+		SetOptionsAvailability();
+
+	elseif id == "PLATE_STYLE" then
+		io_PlateStyle = val;
+		g_doUpdateStyle = true;
+
+		-- make sure vitals are aligned correctly in map mode
+		if (io_PlateStyle == c_Modern) then
+			MAP_INFO_VITALS:SetDims("left:50%+42t; width:80; height:7; top:30;");
+		elseif (io_PlateStyle == c_Beta) then
+			MAP_INFO_VITALS:SetDims("left:50%+42t; width:60; height:6; top:30;");
+		end
+
 	elseif id == "PLATE_ALPHA" then
-		io_Alpha = val
+		io_PlateAlpha = val;
 		for _, PLATE in pairs(w_PLATES) do
-			PLATE.GROUP:SetParam("alpha", io_Alpha)
+			PLATE.GROUP:SetParam("alpha", io_PlateAlpha);
 		end
-	elseif id == "ARCHTYPE_ICON" then
-		io_UseArchTypeIcon = val
+
+	elseif id == "SHADOW_ALPHA" then
+		io_ShadowAlpha = val;
 		for _, PLATE in pairs(w_PLATES) do
-			if PLATE.icon then
-				if PLATE.icon.use_icon then
-					SetIconVisuals(PLATE.MIN_PLATE.ICON, PLATE.icon)
-					if not PLATE.deferred then
-						SetIconVisuals(PLATE.FULL_PLATE.ICON, PLATE.icon)
-					end
-				end
-				if PLATE.MAPMARKER and not PLATE.MAPMARKER.texture_override then
-					SetIconVisuals(PLATE.MAPMARKER:GetIcon(), PLATE.icon)
-				end
-			end
-			if w_MAP_INFO then
-				SetIconVisuals(w_MAP_INFO.ICON, w_MAP_INFO.rules)
+			for _, SHADOW in pairs(PLATE.SHADOWS) do
+				SHADOW:SetParam("alpha", io_ShadowAlpha);
 			end
 		end
 
+	elseif id == "USE_ARCHETYPE_ICON" then
+		io_UseArchetypeIcon = val;
+		for _,PLATE in pairs(w_PLATES) do
+			if (PLATE.icon) then
+				if (PLATE.icon.use_icon) then
+					SetIconVisuals(PLATE.MIN_PLATE.ART, PLATE.icon);
+					SetIconVisuals(PLATE.MIN_PLATE.SHADOW, PLATE.icon);
+					SetIconVisuals(PLATE.FULL_PLATE.ICON.ART, PLATE.icon);
+					SetIconVisuals(PLATE.FULL_PLATE.ICON.SHADOW, PLATE.icon);
+				end
+				if (PLATE.MAPMARKER and not PLATE.MAPMARKER.texture_override) then
+					SetIconVisuals(PLATE.MAPMARKER:GetIcon(), PLATE.icon);
+				end
+			end
+			if (w_MAP_INFO) then
+				SetIconVisuals(w_MAP_INFO.ICON, w_MAP_INFO.rules);
+			end
+		end
 
+	elseif id == "SHOW_TITLES" then
+		io_ShowTitles = val;
+		g_doUpdateConfiguration = true;
 
+	elseif id == "SHOW_LEVELS" then
+		io_ShowLevels = val;
+		g_doUpdateConfiguration = true;
 
+	elseif id == "HIDE_LEVELS_FOR_NPCS" then
+		io_HideLevelsForNPCs = val;
+		g_doUpdateConfiguration = true;
 
+	elseif id == "HIDE_FULL_HEALTHBARS" then
+		io_HideFullHealthbars = val;
+		g_doUpdateConfiguration = true;
 
+	elseif id == "MINIMIZE_DOCKED_PLATES" then
+		io_MinimizeDockedPlates = val;
+		g_doUpdateConfiguration = true;
 
+	elseif id == "MEDIMODE_ENGINEER" then
+		io_MediModeEngineer = val;
+		SelectMediMode();
 
+	elseif id == "MEDIMODE_HEALTH_THRESHOLD" then
+		io_MediModeHealthThreshold = val;
 
+	elseif id == "MEDIMODE_MAX_RANGE" then
+		io_MediModeMaxRange = val;
 
+	elseif id == "HIGH_VISIBILITY" then
+		io_HighVisiblity = val;
+		if (io_Enabled and io_HighVisiblity) then
+			CYCLE_HighVisPulse:Run(1);
+		else
+			CYCLE_HighVisPulse:Stop();
+		end
+		g_doUpdateConfiguration = true;
 
+	elseif (unicode.sub(id, 1, 8) == "HIGH_VIS") then
+		local idx = unicode.sub(id, 10);
+		io_HighVisRanges[idx].range = val;
+		if (val == 0) then
+			InterfaceOptions.UpdateLabel(id, io_HighVisRanges[idx].label .. " (Disabled)");
+		else
+			InterfaceOptions.UpdateLabel(id, io_HighVisRanges[idx].label);
+		end
+		
+	elseif (unicode.sub(id, 1, 14) == "COLOR_SETTINGS") then
+		io_ColorSettings[unicode.lower(unicode.sub(id, 16))] = val;
+		g_doUpdateLayout = true;
+
+	elseif (unicode.sub(id, 1, 25) == "COLOR_PICKER_RELATIONSHIP") then
+		io_RelationshipColors[unicode.lower(unicode.sub(id, 27))] = val.tint;
+		g_doUpdateLayout = true;
+
+	elseif (unicode.sub(id, 1, 18) == "COLOR_PICKER_STAGE") then
+		io_StageColors[tonumber(unicode.sub(id, 20))] = val.tint;
+		g_doUpdateLayout = true;
+
+	elseif (id == "__LOADED") then
+		-- finished startup
+		g_Loaded = true;
+	end
+
+	if (g_Loaded) then
+		if (g_doUpdateStyle) then
+			for _,PLATE in pairs(w_PLATES) do
+				PLATE.vitals = {};
+				PLATE_CreateElements(PLATE);
+				PLATE_UpdateInfo(PLATE);
+				PLATE_UpdateVitals(PLATE, 0);
+				PLATE_UpdateStatus(PLATE, 0);
+				PLATE_UpdateConfiguration(PLATE, 0.1);
+			end
+
+		elseif (g_doUpdateLayout) then
+			for _,PLATE in pairs(w_PLATES) do
+				PLATE_UpdateLayout(PLATE);
+				PLATE_UpdateConfiguration(PLATE, 0.1);
+			end
+
+		elseif (g_doUpdateConfiguration) then
+			for _,PLATE in pairs(w_PLATES) do
+				PLATE_UpdateConfiguration(PLATE, 0.1);
+			end
+		end
+
+		g_doUpdateStyle = false;
+		g_doUpdateLayout = false;
+		g_doUpdateConfiguration = false;
 	end
 end
 
 function SetOptionsAvailability()
-	local disabled = not io_Enabled
-	InterfaceOptions.DisableOption("PLATE_ALPHA", disabled)
-	InterfaceOptions.DisableOption("ARCHTYPE_ICON", disabled)
-	
+	InterfaceOptions.EnableOption("PLATE_STYLE", io_Enabled);
+	InterfaceOptions.EnableOption("PLATE_ALPHA", io_Enabled);
+	InterfaceOptions.EnableOption("SHADOW_ALPHA", io_Enabled);
+	InterfaceOptions.EnableOption("USE_ARCHETYPE_ICON", io_Enabled);
 
+	InterfaceOptions.EnableOption("SHOW_TITLES", io_Enabled);
+	InterfaceOptions.EnableOption("SHOW_LEVELS", io_Enabled);
+	InterfaceOptions.EnableOption("HIDE_LEVELS_FOR_NPCS", io_Enabled);
+	InterfaceOptions.EnableOption("HIDE_FULL_HEALTHBARS", io_Enabled);
+	InterfaceOptions.EnableOption("MINIMIZE_DOCKED_PLATES", io_Enabled);
 
+	InterfaceOptions.EnableOption("MEDIMODE_SETTINGS", io_Enabled);
+	InterfaceOptions.EnableOption("MEDIMODE_ENGINEER", io_Enabled);
+	InterfaceOptions.EnableOption("MEDIMODE_HEALTH_THRESHOLD", io_Enabled);
+	InterfaceOptions.EnableOption("MEDIMODE_MAX_RANGE", io_Enabled);
 
+	InterfaceOptions.EnableOption("HIGH_VISIBILITY", io_Enabled);
+	InterfaceOptions.EnableOption("HIGH_VIS_ARES_ITEMS", io_Enabled);
+	InterfaceOptions.EnableOption("HIGH_VIS_BATTLEFRAME_STATIONS", io_Enabled);
+	InterfaceOptions.EnableOption("HIGH_VIS_GLIDER_PADS", io_Enabled);
+	InterfaceOptions.EnableOption("HIGH_VIS_VENDORS", io_Enabled);
+
+	-- colors are used for the map markers too, so I'll just leave them enabled I guess
+	-- InterfaceOptions.EnableOption("COLOR_SETTINGS_NAME", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_SETTINGS_TITLE", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_SETTINGS_LEVEL", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_SETTINGS_ICON", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_SETTINGS_HEALTH_BAR", io_Enabled);
+
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_FRIENDLY", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_HOSTILE", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_NEUTRAL", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_NPC", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_SQUAD", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_PLATOON", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_ARMY", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_RELATIONSHIP_ME", io_Enabled);
+
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_STAGE_1", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_STAGE_2", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_STAGE_3", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_STAGE_4", io_Enabled);
+	-- InterfaceOptions.EnableOption("COLOR_PICKER_STAGE_5", io_Enabled);
+
+	if (io_Enabled and io_HighVisiblity) then
+		CYCLE_HighVisPulse:Run(1);
+	else
+		CYCLE_HighVisPulse:Stop();
+	end
 end
 
 -- ------------------------------------------
 -- EVENT FUNCTIONS
 -- ------------------------------------------
 function OnComponentLoad()
-	InterfaceOptions.SetCallbackFunc(OnOptionChange, Component.LookupText("ENTITY_PLATES"))
-	g_lastSinActionTime = System.GetClientTime();
+	InterfaceOptions.SetCallbackFunc(OnOptionChange, "TuffPlates")
 	g_myTeamId = SPECTATOR_TEAM;
-	
-	MapInfo_Create()
-	
+
+	MapInfo_Create();
+
 	CB2_RecyclePlates:Bind(RecyclePlates);
-	CB2_MedimodePulse:Bind(MedimodePulse);
 	CB2_ReleaseFocusedPlate:Bind(ReleaseFocusedPlate);
-	
+
+	CYCLE_MediModePulse = Callback2.CreateCycle(MediModePulse);
+	CYCLE_HighVisPulse = Callback2.CreateCycle(HighVisPulse);
 	CYCLE_DisposePlates = Callback2.CreateCycle(DisposePlates);
 	CYCLE_DisposePlates:Run(20);	-- do a clean up every 20 seconds
-	
+
 	Liaison.BindMessage("dock_groupmates", function(data)
 		OnDockGroupMates(data == "true");
 	end);
+
 	HudManager.BlacklistReasons({"reticle_scope"})
 	HudManager.BindOnShow(OnHudShow)
 end
 
 function OnPlayerReady()
 	g_myId = Player.GetTargetId();
+	
 	-- destroy own PLATE, if exists
 	local PLATE = w_PLATES[tostring(g_myId)];
 	if (PLATE) then
 		PLATE_RecycleOut(PLATE);
 	end
+	
 	OnTeamChanged();
 	OnBattleframeChanged();
-	
-	g_PlayerName = Player.GetInfo().name;
 end
 
 function OnHudShow(show, dur)
 	g_ShowHud = show;
-	for tag,PLATE in pairs(w_PLATES) do
+
+	if (g_ShowHud) then
+		if (g_lastFocusedPlate) then
+			PLATE_OnLostFocus(g_lastFocusedPlate);
+		end
+
+		if (g_focused_MARKER) then
+			g_focused_MARKER:DispatchEvent("OnLostFocus");
+		end
+	end
+
+	for _,PLATE in pairs(w_PLATES) do
 		PLATE_UpdateConfiguration(PLATE, dur);
 	end
 end
 
 function OnTeamChanged()
 	local info = Game.GetTargetInfo(g_myId);
+
 	if (info) then
 		g_myTeamId = Game.GetTargetInfo(g_myId).teamId;
 	else
 		g_myTeamId = SPECTATOR_TEAM;
 	end
-	for tag,PLATE in pairs(w_PLATES) do 
+
+	for _,PLATE in pairs(w_PLATES) do
 		PLATE_UpdateInfo(PLATE);
+		PLATE_UpdateConfiguration(PLATE, 0.1);
 	end
 end
 
 function OnLevelChanged()
-	for tag,PLATE in pairs(w_PLATES) do 
+	for _,PLATE in pairs(w_PLATES) do
 		PLATE_UpdateInfo(PLATE);
+		PLATE_UpdateConfiguration(PLATE, 0.1);
 	end
 end
 
 function OnBattleframeChanged()
-	local type = Player.GetCurrentArchtype();
-	local medimode = MEDIMODES.NONE;
-	if (type == "medic") then
-		medimode = MEDIMODES.MEDIC;
-	elseif (type == "bunker") then
-		medimode = MEDIMODES.ENGINEER;
-	end
-		
-	if (medimode ~= g_medimode) then
-		g_medimode = medimode;
-		if (CB2_MedimodePulse:Pending()) then
-			CB2_MedimodePulse:Execute();
-		else
-			MedimodePulse();
-		end		
-	end
-	
-	OnLevelChanged();
+	SelectMediMode();
 end
 
-function OnHideEntity(args)
-	local entityId = tostring(args.entityId);
+function OnHideEntity(args)	
+	local tag = tostring(args.entityId);
 	local hide = args.hide;	-- "all"/true, "map", "hud", or false
 	local PLATE = GetPlateFromArgs(args);
+
 	if (hide) then
-		d_suppressedEntities[entityId] = hide;
+		d_suppressedEntities[tag] = hide;
 		if (PLATE) then
 			if (hide == SUPPRESS_ALL or hide == true) then
-				OnEntityLost({entityId=entityId, timeout=1});
+				OnEntityLost({entityId=args.entityId, timeout=1});
 			else
 				PLATE_UpdateVisibility(PLATE);
 			end
 		end
 	else
-		d_suppressedEntities[entityId] = nil;
+		d_suppressedEntities[tag] = nil;
 		if (PLATE) then
 			PLATE_UpdateVisibility(PLATE);
 		else
-			local info = Game.GetTargetInfo(entityId);
+			local info = Game.GetTargetInfo(args.entityId);
 			if (info) then
-				OnEntityAvailable({entityId=entityId, type=info.type});
+				OnEntityAvailable({entityId=args.entityId, type=info.type});
 			end
 		end
 	end
@@ -276,42 +568,40 @@ end
 
 function OnEntityAvailable(args)
 	-- args = {entityId, type}
-	if ( (g_spectating_follow and isequal(args.entityId, g_myId)) or IGNORE_TYPES[args.type]
-		or d_suppressedEntities[tostring(args.entityId)]) then
-		-- ignore self, IGNORE_TYPES, and entities suppressed by other UI
-		return false;
+	local tag = tostring(args.entityId);
+	
+	-- ignore self, IGNORE_TYPES, and entities suppressed by other UI
+	if ((g_spectating_follow and args.entityId == g_myId)
+		or IGNORE_TYPES[args.type]
+		or d_suppressedEntities[tag]) then
+		return;
 	end
 	
 	-- put the dying predecessor into the recycle bin for immediate use, if it exists
-	local tag = tostring(args.entityId);
 	local PLATE = w_ToRecycle[tag];
 	if (PLATE) then
 		PLATE_RecycleOut(PLATE);
 	end
 	
-	PLATE = GetPlateFromArgs({entityId=args.entityId});
-	if( not PLATE ) then
+	PLATE = GetPlateFromArgs(args);
+	if (not PLATE) then
 		PLATE = PrepareCleanPLATE(args.entityId);
-	end	
-	
+	end
+
 	PLATE_UpdateInfo(PLATE);
 	PLATE_UpdateVitals(PLATE, 0);
 	PLATE_UpdateStatus(PLATE, 0);
 	PLATE_UpdateConfiguration(PLATE, 0.1);
-	PLATE_UpdateMediMode(PLATE);	
 end
 
 function OnEntityLost(args)
-	-- args = {entityId[, timeout]}	
+	-- args = {entityId[, timeout]}
 	local PLATE = GetPlateFromArgs(args);
 	if (not PLATE) then
 		return;	-- none of our concern
 	end
-	
+
 	if (args.timeout) then
-		if (not PLATE) then
-			error("Could not find PLATE for "..tostring(args.entityId));
-		end
 		PLATE_SlowKill(PLATE, 0.5);
 	elseif (PLATE and not PLATE.kill_start) then
 		PLATE_SlowKill(PLATE, 1.0);
@@ -322,20 +612,21 @@ function OnHitTarget(args)
 	if (not args.damage) then
 		return;
 	end
+
 	local PLATE = GetPlateFromArgs(args);
 	if (PLATE) then
 		PLATE_AnimateHit(PLATE, args.damage, 0.4);
 	end
 end
 
-function OnSimulatedHit( args )
+function OnSimulatedHit(args)
 	local PLATE = GetPlateFromArgs(args);
 	if (PLATE) then
 		local vitals = PLATE.vitals;
 		local pct = math.ceil(vitals.health_pct*100);
 		local overfill_pct = math.max(0, pct-100);
 		local max_hp =  PLATE.vitals.MaxHealth * ( overfill_pct + 100 );
-		
+
 		local dur = math.max( 0.15, args.health_change / max_hp * 5 );
 		local delay = math.max( 0.1,args.health_change / max_hp * 0.6 );
 		PLATE.FULL_PLATE.VITALS.FLASH:SetParam( "alpha", 1 );
@@ -380,14 +671,15 @@ end
 
 function OnFullView(args)
 	g_sinView = args.sinView;
+
 	if g_sinView then
-		System.PlaySound("Play_UI_SINView_Mode")
+		System.PlaySound("Play_UI_SINView_Mode");		
 	else
-		System.PlaySound("Stop_UI_SINView_Mode")
+		System.PlaySound("Stop_UI_SINView_Mode");
 	end
-	g_lastSinActionTime = System.GetClientTime();
-	for tag,PLATE in pairs(w_PLATES) do
-		-- only reveal entities with enough importance to have an icon
+
+	for _,PLATE in pairs(w_PLATES) do
+		-- only reveals entities with enough importance to have an icon
 		PLATE_UpdateConfiguration(PLATE, 0.2);
 	end
 end
@@ -407,7 +699,7 @@ function OnSpectatorMode( args )
 	g_spectating = Player.IsSpectating();
 	if (g_spectating) then
 		--g_passiveFocusMin = PRIORITY_CLASS.player;
-		
+
 		-- handle overhead and camera views
 		if( args.follow or args.killshot ) then
 			g_spectating_follow = true;
@@ -417,7 +709,7 @@ function OnSpectatorMode( args )
 		elseif( args.overhead or args.static or args.flycam or args.custom ) then
 			-- when not following a player, make all player aags display
 			g_spectating_follow = false;
-			
+
 			if (g_myId) then
 				ScopeInEntity(g_myId)
 			end
@@ -436,12 +728,12 @@ function OnSpectatePlayer(arg)
 			g_myId = Player.GetTargetId();
 		end
 		--OnTeamChanged();
-		
+
 		-- "scope in" the previous local entity
 		if (prev_ent) then
 			ScopeInEntity(prev_ent)
 		end
-		
+
 		-- "scope out" the new local entity
 		if (g_myId and g_spectating_follow) then
 			ScopeOutEntity(g_myId)
@@ -452,36 +744,47 @@ end
 function PLATE_OnGotFocus(PLATE)
 	PLATE.focus = true;
 	PLATE_UpdateConfiguration(PLATE, 0.2);
+
 	if (PLATE ~= g_lastFocusedPlate) then
-		if (g_lastFocusedPlate and g_lastFocusedPlate.focus) then
-			-- GotFocus must have fired before LostFocus; execute release immediately
+		if (g_lastFocusedPlate) then
+			-- quickly fade out previously focused plate
 			g_lastFocusedPlate.focus = false;
-			CB2_ReleaseFocusedPlate:Cancel();
-			CB2_ReleaseFocusedPlate:Schedule(0);
-		elseif (CB2_ReleaseFocusedPlate:Pending() and g_lastFocusedPlate) then
-			-- hurry up and disappear
 			CB2_ReleaseFocusedPlate:Execute();
 		end
 		g_lastFocusedPlate = PLATE;
+	else
+		if (CB2_ReleaseFocusedPlate:Pending()) then
+			-- cancel fade-out of this plate because we want it to remain focused
+			CB2_ReleaseFocusedPlate:Cancel();
+		end
 	end
 end
 
 function PLATE_OnLostFocus(PLATE)
-	PLATE.focus = false;
-	-- slow fade
-	if (CB2_ReleaseFocusedPlate:Pending()) then
-		CB2_ReleaseFocusedPlate:Reschedule(RELEASE_PLATE_FOCUS_DELAY);
-	else
+	if (PLATE.focus and PLATE == g_lastFocusedPlate) then
+		PLATE.focus = false;
+
+		if (CB2_ReleaseFocusedPlate:Pending()) then
+			CB2_ReleaseFocusedPlate:Cancel();
+		end
 		CB2_ReleaseFocusedPlate:Schedule(RELEASE_PLATE_FOCUS_DELAY);
+	end
+end
+
+function PLATE_OnEdgeTrip(PLATE, args)
+	PLATE.docked = not args.onscreen;
+
+	if (PLATE.minimized ~= PLATE.docked) then
+		PLATE.minimized = PLATE.docked;
+		PLATE_UpdateConfiguration(PLATE, 0.2);
 	end
 end
 
 function OnDockGroupMates(will_dock)
 	-- called from GroupUI component ("dock_groupmates")
-	
 	PRIORITY_SETTINGS[PRIORITY_HIGH].docks_to_edge = will_dock;
 	-- update all plates at this priority
-	for _,PLATE in pairs(w_PLATES) do 
+	for _,PLATE in pairs(w_PLATES) do
 		if (PLATE.priority == PRIORITY_HIGH) then
 			PLATE_UpdateConfiguration(PLATE, 0.1);
 		end
@@ -546,22 +849,66 @@ function ReleaseFocusedPlate()
 	end
 end
 
-function MedimodePulse()
+function HighVisPulse()
+	for _,PLATE in pairs(w_PLATES) do
+		if (PLATE.highVisType) then
+			local range = io_HighVisRanges[PLATE.highVisType].range;
+			local will_show = false;
+
+			if (range > 0) then
+				local pos = Game.GetTargetBounds(PLATE.entityId);
+				if (pos) then
+					will_show = (Vec3.Distance(Player.GetPosition(), pos) <= range);
+				end
+			end
+				
+			if (will_show ~= PLATE.inHighVisRange) then
+				-- only update plate visibility if it comes within or goes out of range
+				PLATE.inHighVisRange = will_show;
+				PLATE_UpdateConfiguration(PLATE, 0.2);
+			end
+		end
+	end
+end
+
+function SelectMediMode()
+	local type = Player.GetCurrentArchtype();
+
+	g_mediMode = MEDIMODES.NONE;
+
+	if (type == "medic") then
+		g_mediMode = MEDIMODES.MEDIC;
+
+	elseif (type == "bunker") then
+		if (io_MediModeEngineer ~= c_NoDeployables) then
+			g_mediMode = MEDIMODES.ENGINEER;
+		end
+	end
+
+	if (g_mediMode) then
+		CYCLE_MediModePulse:Run(1);
+	else
+		CYCLE_MediModePulse:Stop();
+		MediModePulse();
+	end
+end
+
+function MediModePulse()
 	local pulse_dur = 1;
 	local oldPatients = {};
 	local currentPatients = {};
-	
-	local maxDist2 = MEDIMODE_MAX_RANGE*MEDIMODE_MAX_RANGE;
+	local maxDist2 = io_MediModeMaxRange*io_MediModeMaxRange;
 	local myPos = Player.GetPosition();
-	for tag,PLATE in pairs(w_PLATES) do
-		if (g_medimode and not PLATE.info.hostile) then
+
+	for _,PLATE in pairs(w_PLATES) do
+		if (g_mediMode and not PLATE.info.hostile) then
 			-- score on proximity, injury, and relation
 			local score = 0;
-			
+
 			-- base scoring
 			if (PLATE.info.squad_member or isequal(PLATE.info.ownerId, g_myId)) then
 				score = 200;
-			elseif (PLATE.info.type == g_medimode.patientType) then
+			elseif (PLATE.info.type == g_mediMode.patientType and not (g_mediMode.patientType == "deployable" and io_MediModeEngineer == c_MyDeployablesOnly)) then
 				score = 100;
 				if (PLATE.info.isNpc) then
 					if (PLATE.status.visible) then
@@ -571,11 +918,15 @@ function MedimodePulse()
 					end
 				end
 			end
-			
+
 			if (score > 0 and PLATE.vitals.health_pct) then
 				-- injury scoring
-				score = score * (1-PLATE.vitals.health_pct);
-				
+				if (PLATE.vitals.health_pct < io_MediModeHealthThreshold) then
+					score = score * (1-PLATE.vitals.health_pct);
+				else
+					score = 0;
+				end
+
 				if (PLATE.focus) then
 					-- you care about this man
 					score = score * 2;
@@ -592,51 +943,43 @@ function MedimodePulse()
 						end
 					end
 				end
-				
+
 				if (score > 0) then
 					local patient = {score=score, PLATE=PLATE};
-					table.insert(currentPatients, patient);
+					currentPatients[#currentPatients + 1] = patient;
 				end
 			end
 		end
-		
-		if (PLATE.inMediview) then
+
+		if (PLATE.inMediView) then
 			oldPatients[PLATE.tag] = PLATE;
 		end
 	end
-	
+
 	-- pick the top N patients
 	table.sort(currentPatients, SortPatients);
 	local dur = 0.2;
 	if (#currentPatients > 0) then
 		for i = 1, math.min(g_maxPatients, #currentPatients) do
 			local PLATE = currentPatients[i].PLATE;
-			if (PLATE.inMediview) then
+			if (PLATE.inMediView and currentPatients[i].score > 0) then
 				-- exclude from expiring list
 				oldPatients[PLATE.tag] = nil;
 			else
 				-- add to mediview
-				PLATE.inMediview = true;
-				PLATE_UpdateMediMode(PLATE);
+				PLATE.inMediView = true;
 				PLATE_UpdateConfiguration(PLATE, dur);
 			end
 			-- pulse injured portion
-			if PLATE.deferred then
-				PLATE_DeferredCreation(PLATE)
-			end
 			PLATE.FULL_PLATE.VITALS.EMPTY:ParamTo("exposure", 1, pulse_dur/2);
 			PLATE.FULL_PLATE.VITALS.EMPTY:QueueParam("exposure", -.25, pulse_dur/2);
 		end
 	end
-	for tag,PLATE in pairs(oldPatients) do
+	for _,PLATE in pairs(oldPatients) do
 		-- remove from mediview
-		PLATE.inMediview = false;
-		PLATE_UpdateMediMode(PLATE);
+		PLATE.FULL_PLATE.VITALS.EMPTY:ParamTo("exposure", -0.6, pulse_dur/2);
+		PLATE.inMediView = false;
 		PLATE_UpdateConfiguration(PLATE, dur);
-	end
-	
-	if (g_medimode) then
-		callback(MedimodePulse, nil, pulse_dur);
 	end
 end
 
@@ -647,81 +990,165 @@ end
 -- ------------------------------------------
 -- PLATE FUNCTIONS
 -- ------------------------------------------
-function PLATE_Create()
+function PLATE_Construct()
 	local FRAME = Component.CreateFrame("TrackingFrame");
-	local GROUP = Component.CreateWidget("plate", FRAME);
-	
+
 	local PLATE = {
 		FRAME = FRAME,
 		ANCHOR = FRAME:GetAnchor(),
-		GROUP = GROUP,
-		MIN_PLATE = {
-			GROUP = GROUP:GetChild("min_plate"),
-			ICON = MultiArt.Create(GROUP:GetChild("min_plate")),
-		},
-		deferred = true
 	};
-	
-	-- one time initialization (never changes)
-	PLATE.GROUP:SetDims("dock:fill");
-	
+
+	-- one time initialization
+	PLATE.FRAME:SetBounds(-120, -80, 240, 160);
+	PLATE.FRAME:Show(false);
+	PLATE.FRAME:SetScene("world");
+
 	PLATE.ANCHOR:SetParam("rotation",{axis={x=0,y=0,z=1}, angle=0});
-	--PLATE.ANCHOR:SetParam("scale",{x=0.7,y=0.7,z=0.7});
-	
 	PLATE.ANCHOR:LookAt("screen");
-	PLATE.FRAME:SetBounds(-116, -48, 512, 64)
-	--PLATE.FRAME:SetScaleRamp(5, 50, 1, .5);
+
 	PLATE.FRAME:BindEvent("OnGotFocus", function()
 		if (not PLATE.kill_start) then
 			PLATE_OnGotFocus(PLATE);
 		end
 	end);
+
 	PLATE.FRAME:BindEvent("OnLostFocus", function()
 		if (not PLATE.kill_start) then
 			PLATE_OnLostFocus(PLATE);
 		end
 	end);
-	PLATE.FRAME:SetScene("world");
-	
+
+	PLATE.FRAME:BindEvent("OnEdgeTrip", function(args)
+		PLATE_OnEdgeTrip(PLATE, args);
+	end);
+
+	PLATE_CreateElements(PLATE);
+
 	return PLATE;
+end
+
+function PLATE_CreateElements(PLATE)
+	if (PLATE.GROUP) then
+		Component.RemoveWidget(PLATE.GROUP);
+		PLATE.GROUP = nil;
+	end
+
+	local GROUP = Component.CreateWidget(io_PlateStyle, PLATE.FRAME);
+	PLATE.GROUP = GROUP;
+	
+	PLATE.MIN_PLATE = {
+		GROUP = GROUP:GetChild("min_plate"),
+		ART = MultiArt.Create(GROUP:GetChild("min_plate.art")),
+		SHADOW = MultiArt.Create(GROUP:GetChild("min_plate.shadow")),
+	};
+	
+	GROUP = PLATE.GROUP:GetChild("full_plate");
+	PLATE.FULL_PLATE = {
+		GROUP = GROUP,
+		ICON = {
+			GROUP = GROUP:GetChild("icon"),
+			ART = MultiArt.Create(GROUP:GetChild("icon.art")),
+			SHADOW = MultiArt.Create(GROUP:GetChild("icon.shadow")),
+		},
+		NAME = {
+			GROUP = GROUP:GetChild("name"),
+			TEXT = GROUP:GetChild("name.text"),
+			SHADOW = GROUP:GetChild("name.shadow"),
+		},
+		LEVEL = {
+			GROUP = GROUP:GetChild("level"),
+			TEXT = GROUP:GetChild("level.text"),
+			SHADOW = GROUP:GetChild("level.shadow"),
+		},
+		TITLE = {
+			GROUP = GROUP:GetChild("title"),
+			TEXT = GROUP:GetChild("title.text"),
+			SHADOW = GROUP:GetChild("title.shadow"),
+		},
+		DEV_ICON = {
+			GROUP = GROUP:GetChild("dev_icon"),
+			ART = GROUP:GetChild("dev_icon.art"),
+			SHADOW = GROUP:GetChild("dev_icon.shadow"),
+		},
+	};
+	
+	GROUP = PLATE.FULL_PLATE.GROUP:GetChild("vitals");
+	PLATE.FULL_PLATE.VITALS = {
+		GROUP = GROUP,
+		FILL = GROUP:GetChild("fill"),
+		SHADOW = GROUP:GetChild("shadow"),
+		-- OVERFILL = GROUP:GetChild("overfill"),
+		EMPTY = GROUP:GetChild("empty"),
+		FLASH = GROUP:GetChild("flash"),
+		DELTA = {
+			GROUP = GROUP:GetChild("delta"),
+			FILL = GROUP:GetChild("delta.fill"),
+		},
+	};
+	
+	-- only for iterating over to set opacity
+	PLATE.SHADOWS = {
+		MIN_ICON = PLATE.MIN_PLATE.SHADOW,
+		NAME = PLATE.FULL_PLATE.NAME.SHADOW,
+		TITLE = PLATE.FULL_PLATE.TITLE.SHADOW,
+		ICON = PLATE.FULL_PLATE.ICON.SHADOW,
+		DEV_ICON = PLATE.FULL_PLATE.DEV_ICON.SHADOW,
+		LEVEL = PLATE.FULL_PLATE.LEVEL.SHADOW,
+		VITALS = PLATE.FULL_PLATE.VITALS.SHADOW,
+	};
+
+ 	PLATE.GROUP:Show(io_Enabled);
+	PLATE.GROUP:SetDims("center-x:50%; bottom:50%; width:256; height:48;");
+	PLATE.GROUP:SetParam("alpha", io_PlateAlpha);
+
+	PLATE.MIN_PLATE.GROUP:SetParam("alpha", 0);
+	PLATE.FULL_PLATE.GROUP:SetParam("alpha", 0);
+
+	for _, SHADOW in pairs(PLATE.SHADOWS) do
+		SHADOW:SetParam("alpha", io_ShadowAlpha);
+	end
+
+	PLATE.MIN_PLATE.SHADOW:SetParam("tint", "#000000");
+	PLATE.FULL_PLATE.ICON.SHADOW:SetParam("tint", "#000000");
+
+	PLATE.style = io_PlateStyle;
 end
 
 function PLATE_Init(PLATE, entityId)
 	assert(not PLATE.tag);
+
 	PLATE.entityId = entityId;
 	PLATE.tag = tostring(entityId);
-	
-	if not PLATE.deferred then
-		PLATE_SetupRenderTarget(PLATE)
-	end
-	
-	local info = Game.GetTargetInfo(PLATE.entityId);
-	
-	if (not info) then
-		info = {};
-	end
-	EntityRules.LoadEntityInfo(info);
-	local rules = EntityRules.GetRules();
-	
-	if not PLATE.MAPMARKER and (rules.worldmap or rules.radar) then
-		PLATE.MAPMARKER = MapMarker.Create()
-	end
-	
+
 	PLATE.kill_start = nil;
 	PLATE.kill_dur = nil;
+	PLATE.inHighVisRange = nil;
+	PLATE.inMediView = false;
+	PLATE.focus = false;
 	
-	-- restore visibility
-	PLATE.FRAME:Show(true);
-	PLATE.FRAME:SetParam("alpha", 1);
-	PLATE.GROUP:Show(io_Enabled)
-	PLATE.GROUP:SetParam("alpha", io_Alpha)
-	
+	PLATE.FRAME:Show(false);
+
+	if (PLATE.style ~= io_PlateStyle) then
+		PLATE_CreateElements(PLATE);
+	else
+		-- reset visibility
+		PLATE.GROUP:Show(io_Enabled);
+		PLATE.GROUP:SetParam("alpha", io_PlateAlpha);
+
+		PLATE.MIN_PLATE.GROUP:SetParam("alpha", 0);
+		PLATE.FULL_PLATE.GROUP:SetParam("alpha", 0);
+
+		for _, SHADOW in pairs(PLATE.SHADOWS) do
+			SHADOW:SetParam("alpha", io_ShadowAlpha);
+		end
+	end
+
 	if (w_PLATES[PLATE.tag]) then
 		local PRE_PLATE = w_PLATES[PLATE.tag];
 		error(PRE_PLATE.info.name.." ("..tostring(entityId)..") is already registered!");
 	end
 	w_PLATES[PLATE.tag] = PLATE;
-	
+
 	-- initialize frame
 	local bindSuccess = PLATE.ANCHOR:BindToEntity(entityId, "HP_SinCard", "FX_Head", false, true);
 	if (bindSuccess) then
@@ -731,36 +1158,33 @@ function PLATE_Init(PLATE, entityId)
 		PLATE.ANCHOR:SetParam("translation", {x=0, y=0, z=0});
 		PLATE.ANCHOR:SetParam("entity_bounds_offset", {x=0, y=0, z=1});
 	end
-	PLATE.FRAME:SetFocalMode(true);
 
 	local bounds = Game.GetTargetBounds(entityId, true);
 	if (bounds) then
 		PLATE.prominence = (bounds.width+bounds.height+bounds.length)/6;
 	else
 		PLATE.prominence = 1;
-
-
-
 	end
+
+	PLATE.FRAME:SetFocalMode(true);
+	PLATE.FRAME:SetParam("alpha", 1);
 	PLATE.FRAME:SetParam("prominence", PLATE.prominence);
-	
-	--Scale the Plate up based on the size of the entity
-	--og(tostring(Game.GetTargetInfo(entityId).name)..": "..PLATE.prominence.." - "..scale)
-	local scale = math.min(1.5, .9 + (PLATE.prominence/50));
-	PLATE.GROUP:SetParam("scaleX", scale)
-	PLATE.GROUP:SetParam("scaleY", scale)
-	
-	-- bind map marker
-	if PLATE.MAPMARKER then
+
+	local info = Game.GetTargetInfo(PLATE.entityId) or {};
+	local rules = EntityRules.GetRules(info);
+
+	-- create and bind map marker
+	if (not PLATE.MAPMARKER and (rules.worldmap or rules.radar)) then
+		PLATE.MAPMARKER = MapMarker.Create();
+	end
+
+	if (PLATE.MAPMARKER) then
 		PLATE.MAPMARKER:BindToEntity(entityId);
 		PLATE.MAPMARKER:GetIcon():SetParam("alpha", 1);
-		
+
 		PLATE.MAPMARKER:AddHandler("OnGotFocus", function()
 			g_focused_MARKER = PLATE.MAPMARKER;
 			MAP_INFO_GROUP:Show(true);
-			if PLATE.deferred then
-				PLATE_DeferredCreation(PLATE)
-			end
 			if (PLATE.FULL_PLATE.VITALS.GROUP:IsVisible()) then
 				Component.FosterWidget(PLATE.FULL_PLATE.VITALS.GROUP, MAP_INFO_VITALS);
 				--MAP_INFO_VITALS:SetTarget(PLATE.FULL_PLATE.VITALS.GROUP);
@@ -771,11 +1195,8 @@ function PLATE_Init(PLATE, entityId)
 			Component.FosterWidget(MAP_INFO_GROUP, PLATE.MAPMARKER:GetBody());
 			MapInfo_Update(PLATE)
 		end);
-		
+
 		PLATE.MAPMARKER:AddHandler("OnLostFocus", function()
-			if PLATE.deferred then
-				PLATE_DeferredCreation(PLATE)
-			end
 			PLATE.FULL_PLATE.VITALS.GROUP:SetParam("alpha", 0);
 			Component.FosterWidget(PLATE.FULL_PLATE.VITALS.GROUP, nil);
 			if (g_focused_MARKER == PLATE.MAPMARKER) then
@@ -783,212 +1204,86 @@ function PLATE_Init(PLATE, entityId)
 				g_focused_MARKER = nil;
 			end
 		end);
-	
 	end
-	
+
 	-- initialize cached data
 	PLATE.info = {};
+	PLATE.rules = nil;
 	PLATE.status = {};
 	PLATE.vitals = {};
 	PLATE.icon = nil;
 	PLATE.priority = PRIORITY_NONE;
-	
+
 	return PLATE;
-end
-
-function PLATE_RecycleOut(PLATE)
-	-- dump it here
-	Component.RemoveRenderTarget(PLATE.tag)
-	PLATE.ANCHOR:BindToEntity(nil);
-	PLATE.FRAME:Show(false);
-	
-	w_PLATES[PLATE.tag] = nil;
-	w_ToRecycle[PLATE.tag] = nil;
-	PLATE.tag = nil;
-	PLATE.entityId = nil;
-	
-	if (PLATE.MAPMARKER) then
-		PLATE.MAPMARKER:ShowOnWorldMap(false);
-		PLATE.MAPMARKER:ShowOnRadar(false);
-		PLATE.MAPMARKER:SetRadarEdgeMode(MapMarker.EDGE_NONE);
-		PLATE.MAPMARKER.texture_override = false;
-	end
-	
-	w_RecycleBin[#w_RecycleBin+1] = PLATE;
-	if (g_lastFocusedPlate == PLATE) then
-		g_lastFocusedPlate = nil;
-	end
-end
-
-function PrepareCleanPLATE(entityId)
-	local n = #w_RecycleBin;
-	local PLATE = w_RecycleBin[n];
-	if (PLATE) then
-		w_RecycleBin[n] = nil;
-	else
-		-- create one
-		PLATE = PLATE_Create();
-	end
-	-- initilaize
-	PLATE_Init(PLATE, entityId);
-	
-	return PLATE;
-end
-
-function PLATE_Finalize(PLATE)
-	if (PLATE.GROUP) then
-		Component.RemoveWidget(PLATE.GROUP);
-		PLATE.GROUP = nil;	
-	end
-	if (PLATE.MAPMARKER) then
-		PLATE.MAPMARKER:Destroy();
-		PLATE.MAPMARKER = nil;
-	end
-	if (PLATE.FRAME) then
-		Component.RemoveFrame(PLATE.FRAME);
-		PLATE.FRAME = nil;
-	end
-	if (PLATE.TEXTURE_FRAME) then
-		Component.RemoveFrame(PLATE.TEXTURE_FRAME);
-		PLATE.TEXTURE_FRAME = nil;
-	end
-end
-
-function PLATE_SlowKill(PLATE, death_dur)	
-	if( PLATE == nil ) then
-		return;
-	end
-
-	PLATE.FRAME:ParamTo("alpha", 0, death_dur);
-	PLATE.FRAME:SetFocalMode(false);
-	PLATE.kill_start = System.GetClientTime();
-	PLATE.kill_dur = death_dur;
-	
-	if PLATE.MAPMARKER then
-		PLATE.MAPMARKER:GetIcon():ParamTo("alpha", 0, death_dur);
-	end
-	
-	-- move into the ToRecycle pile
-	w_PLATES[PLATE.tag] = nil;
-	assert(not w_ToRecycle[PLATE.tag], "there can only be one");
-	w_ToRecycle[PLATE.tag] = PLATE;
-	
-	if (not CB2_RecyclePlates:Pending()) then
-		CB2_RecyclePlates:Schedule(PLATE.kill_dur);
-	end
 end
 
 function PLATE_UpdateInfo(PLATE)
-	local info = Game.GetTargetInfo(PLATE.entityId);
+	local info = Game.GetTargetInfo(PLATE.entityId) or {};
+	local rules = EntityRules.GetRules(info);
 	
-	if (not info) then
-		info = {};
+	PLATE.FULL_PLATE.NAME.TEXT:SetText(rules.name);
+	PLATE.FULL_PLATE.NAME.SHADOW:SetText(rules.name);
+	
+	if (rules.title) then
+		PLATE.FULL_PLATE.TITLE.TEXT:SetText(rules.title);
+		PLATE.FULL_PLATE.TITLE.SHADOW:SetText(rules.title);
+		PLATE.FULL_PLATE.TITLE.GROUP:Show(true);
+	else
+		PLATE.FULL_PLATE.TITLE.GROUP:Show(false);
 	end
-	
-	EntityRules.LoadEntityInfo(info);
-	local rules = EntityRules.GetRules();
-	
-	local mapmarker_subtitle = info.title;
-	if (not mapmarker_subtitle and info.faction) then
-		--mapmarker_subtitle = Component.LookupText(info.faction);
-	end	
-	
 
-	if PLATE.MAPMARKER then
-		PLATE.MAPMARKER:SetTitle(rules.name);
-		PLATE.MAPMARKER:SetSubtitle(mapmarker_subtitle);
-		PLATE.MAPMARKER:GetIcon():SetParam("tint", rules.relationship_color);
+	if (info.level and info.level > 0) then
+		PLATE.FULL_PLATE.LEVEL.TEXT:SetText(info.effective_level or info.level);
+		PLATE.FULL_PLATE.LEVEL.SHADOW:SetText(info.effective_level or info.level);
+		PLATE.FULL_PLATE.LEVEL.GROUP:Show(true);
+	else
+		PLATE.FULL_PLATE.LEVEL.GROUP:Show(false);
 	end
-	
-	PLATE.type = info.type
-	
-	PLATE.icon = {use_icon=rules.use_icon, texture=rules.texture, region=rules.region, icon_url=rules.icon_url};
-	PLATE.MIN_PLATE.ICON:SetParam("tint", rules.relationship_color);
-	
-	if not PLATE.deferred then
-		PLATE.FULL_PLATE.NAME:SetText(rules.name);
-	
-		PLATE.FULL_PLATE.VITALS.DEV:Show(rules.isDev)
-	
-		if info.level and info.level > 0 then
-			local level = info.level
-			if info.effective_level and info.effective_level > 0 then
-				level = info.effective_level
-			end
-			PLATE.FULL_PLATE.LEVEL.GROUP:Show();
-			PLATE.FULL_PLATE.LEVEL.BG:SetParam( "tint", rules.con_color );
-			local show_arrow = false
-			if rules.con_color == "con_skull" and (rules.hostile or info.faction == "neutral") then
-				PLATE.FULL_PLATE.LEVEL.GLYPH:SetText("");
-				PLATE.FULL_PLATE.LEVEL.SKULL:Show();
-			else
-				PLATE.FULL_PLATE.LEVEL.GLYPH:SetText(level);
-				PLATE.FULL_PLATE.LEVEL.SKULL:Hide();
-				PLATE.FULL_PLATE.LEVEL.GLYPH:SetTextColor( rules.con_color )
-				if info.type == "character" and not info.isNpc and info.effective_level and info.level and info.effective_level ~= info.level and info.effective_level > 0 then
-					show_arrow = true
-					if info.effective_level < info.level then
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetDims("height:_; center-y:50%+4")
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetRegion("down")
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetParam("tint", "#D81D1D")
-					else
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetDims("height:_; center-y:50%-18")
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetRegion("up")
-						PLATE.FULL_PLATE.LEVEL.ARROW:SetParam("tint", "#4DD81D")
-					end
-				end
-			end
-			PLATE.FULL_PLATE.LEVEL.ARROW:Show(show_arrow)
-		else
-			PLATE.FULL_PLATE.LEVEL.GROUP:Hide();
-		end
-		
-		if (rules.title) then
-			PLATE.FULL_PLATE.TITLE:SetText(rules.title);
-			PLATE.FULL_PLATE.TITLE:Show(true);
-			PLATE.FULL_PLATE.NAME:SetDims("top:0; height:_");
-			PLATE.FULL_PLATE.ICON:SetDims("center-y:50%; height:_")
-			PLATE.FULL_PLATE.VITALS.GROUP:SetDims("top:33; height:_")
-		else
-			PLATE.FULL_PLATE.TITLE:SetText("");
-			PLATE.FULL_PLATE.TITLE:Show(false);
-			PLATE.FULL_PLATE.NAME:SetDims("center-y:60%; height:_");
-			PLATE.FULL_PLATE.ICON:SetDims("center-y:60%; height:_")
-			PLATE.FULL_PLATE.VITALS.GROUP:SetDims("top:30; height:_")
-		end
-		
 
-		PLATE.FULL_PLATE.ICON:SetParam("tint", rules.relationship_color);
-		PLATE.FULL_PLATE.TITLE:SetTextColor(rules.relationship_color);
-		PLATE.FULL_PLATE.NAME:SetTextColor(rules.relationship_color);
-		
-
-
-
-		PLATE.FULL_PLATE.VITALS.OVERFILL:SetParam("glow", rules.relationship_color);
-		PLATE.FULL_PLATE.VITALS.FILL:SetParam("tint", rules.relationship_color);
-		--PLATE.FULL_PLATE.VITALS.EMPTY:SetParam("tint", relationship_color);
-		-- set up icon
-		
-	end
-	
 	if (rules.use_icon) then
-		PLATE.MIN_PLATE.ICON:Show(true);
-		SetIconVisuals(PLATE.MIN_PLATE.ICON, rules)
-		if not PLATE.deferred then
-			PLATE.FULL_PLATE.ICON:Show(true);
-			SetIconVisuals(PLATE.FULL_PLATE.ICON, rules)
-			PLATE.FULL_PLATE.TEXT_GROUP:SetDims("left:20") -- adjust text dims
-		end
+		PLATE.icon = {use_icon=rules.use_icon, texture=rules.texture, region=rules.region, icon_url=rules.icon_url};
+		SetIconVisuals(PLATE.MIN_PLATE.ART, rules);
+		SetIconVisuals(PLATE.MIN_PLATE.SHADOW, rules);
+		SetIconVisuals(PLATE.FULL_PLATE.ICON.ART, rules);
+		SetIconVisuals(PLATE.FULL_PLATE.ICON.SHADOW, rules);
+		PLATE.MIN_PLATE.GROUP:Show(true);
+		PLATE.FULL_PLATE.ICON.GROUP:Show(true);
 	else
 		PLATE.icon = nil;
-		PLATE.MIN_PLATE.ICON:Show(false);
-		if not PLATE.deferred then
-			PLATE.FULL_PLATE.ICON:Show(false);
-			PLATE.FULL_PLATE.TEXT_GROUP:SetDims("left:0") -- adjust text dims
-		end
+		PLATE.MIN_PLATE.GROUP:Show(false);
+		PLATE.FULL_PLATE.ICON.GROUP:Show(false);
 	end
-	
+
+	if (info.isDev) then
+		PLATE.FULL_PLATE.DEV_ICON.GROUP:Show(true);
+	else
+		PLATE.FULL_PLATE.DEV_ICON.GROUP:Show(false);
+	end
+
+	local vitals = Game.GetTargetVitals(PLATE.entityId) or {};
+	if (vitals.MaxHealth ~= nil and vitals.MaxHealth ~= 0) then
+		PLATE.FULL_PLATE.VITALS.GROUP:Show(true);
+	else
+		PLATE.FULL_PLATE.VITALS.GROUP:Show(false);
+	end
+
+	-- marker set up
+	if (PLATE.MAPMARKER) then
+		PLATE.MAPMARKER:SetTitle(rules.name);
+		PLATE.MAPMARKER:SetSubtitle(rules.title);
+
+		local ICON = PLATE.MAPMARKER:GetIcon();
+		if (not PLATE.MAPMARKER.texture_override) then
+			SetIconVisuals(ICON, rules)
+		end
+		local scale = math.ceil(65 * rules.marker_scale);
+		ICON:SetDims("width:" .. scale .. "%; height:" .. scale .. "%");
+
+		PLATE.MAPMARKER:ShowOnWorldMap(rules.worldmap, rules.min_zoom, rules.max_zoom);
+		PLATE.MAPMARKER:ShowOnRadar(rules.radar);
+		PLATE.MAPMARKER:SetRadarEdgeMode(rules.edge_mode);
+	end
+
 	-- priority settings
 	if (info.squad_member) then
 		PLATE.priority = PRIORITY_HIGH;
@@ -997,99 +1292,188 @@ function PLATE_UpdateInfo(PLATE)
 	else
 		PLATE.priority = PRIORITY_LOW;
 	end
-	
-	if PLATE.MAPMARKER then
-		-- more marker set up
-		if (not PLATE.MAPMARKER.texture_override) then
-			SetIconVisuals(PLATE.MAPMARKER:GetIcon(), rules)
-		end
-		local scale = math.ceil(65*rules.marker_scale);
-		PLATE.MAPMARKER:GetIcon():SetDims("width:"..scale.."%; height:"..scale.."%");
 
-		PLATE.MAPMARKER:ShowOnWorldMap(rules.worldmap, rules.min_zoom, rules.max_zoom);
-		PLATE.MAPMARKER:ShowOnRadar(rules.radar);
-		PLATE.MAPMARKER:SetThemeColor(rules.relationship_color);
-		PLATE.MAPMARKER:SetRadarEdgeMode(rules.edge_mode);
+	-- increased visibility settings
+	if (rules.region == "business") then
+		PLATE.highVisType = "VENDORS";
+	elseif (rules.region == "glider") then
+		PLATE.highVisType = "GLIDER_PADS";
+	elseif (rules.region == "battleframe_station") then
+		PLATE.highVisType = "BATTLEFRAME_STATIONS";
+	elseif (ARES_ITEMS[rules.name]) then
+		PLATE.highVisType = "ARES_ITEMS";
+	else
+		PLATE.highVisType = nil;
 	end
-	
+
 	PLATE.info = info;
+	PLATE.rules = rules;
+	
+	PLATE_UpdateLayout(PLATE);
 	PLATE_UpdateVisibility(PLATE);
 end
 
-function PLATE_UpdateStatus(PLATE, dur)
-	local status = Game.GetTargetStatus(PLATE.entityId);
-	if status then
-		PLATE.status = status;
-		
-		if PLATE.MAPMARKER then
-			local ICON = PLATE.MAPMARKER:GetIcon();
-			if not isequal(PLATE.type, "vehicle") and (status.state == "incapacitated") then
-				PLATE.MAPMARKER.texture_override = true;
-				ICON:SetTexture("MapMarkers", "skull");
-				ICON:ParamTo("alpha", 1, dur);
-			elseif not isequal(PLATE.type, "vehicle") and (status.state == "dead") then
-				PLATE.MAPMARKER.texture_override = true;
-				ICON:SetTexture("MapMarkers", "skull");
-				ICON:ParamTo("alpha", 0.4, dur);
-			else
-				PLATE.MAPMARKER.texture_override = false;
-				if (PLATE.icon) then
-					SetIconVisuals(ICON, PLATE.icon)
-				end
-				ICON:ParamTo("alpha", 1, dur);
+function PLATE_UpdateLayout(PLATE)
+	-- updates layout/colors for visible elements
+	local rules = PLATE.rules;
+	if (not rules) then
+		return;
+	end
+	
+	local has_title = PLATE.FULL_PLATE.TITLE.GROUP:IsVisible();
+	local has_dev_icon = PLATE.FULL_PLATE.DEV_ICON.GROUP:IsVisible();
+	local has_icon = PLATE.FULL_PLATE.ICON.GROUP:IsVisible();
+	local has_level = PLATE.FULL_PLATE.LEVEL.GROUP:IsVisible();
+	local has_vitals = PLATE.FULL_PLATE.VITALS.GROUP:IsVisible();
+
+	if (PLATE.style == c_Modern) then
+		local centered = not (has_vitals or has_dev_icon) and not (has_icon and has_title);
+
+		if (centered) then
+			PLATE.FULL_PLATE.NAME.GROUP:SetDims("left:" .. 128 - PLATE.FULL_PLATE.NAME.TEXT:GetTextDims().width/2 .. "; width:_;");
+
+			if (has_title) then
+				PLATE.FULL_PLATE.TITLE.GROUP:SetDims("left:" .. 128 - PLATE.FULL_PLATE.TITLE.TEXT:GetTextDims().width/2 .. "; width_;");
+			elseif (has_icon) then
+				PLATE.FULL_PLATE.ICON.GROUP:SetDims("right:" .. PLATE.FULL_PLATE.NAME.GROUP:GetDims().left.offset - 2 .. "; width:_;");
+			end
+
+			if (has_level) then
+				PLATE.FULL_PLATE.LEVEL.GROUP:SetDims("right:" .. ((has_icon and PLATE.FULL_PLATE.ICON.GROUP:GetDims().left.offset)
+					or PLATE.FULL_PLATE.NAME.GROUP:GetDims().left.offset) - 3 .. "; width:_;");
+			end
+
+		else
+			PLATE.FULL_PLATE.NAME.GROUP:SetDims("left:" .. ((has_dev_icon and PLATE.FULL_PLATE.DEV_ICON.GROUP:GetDims().right.offset) or 87) .. "; width:_;");
+
+			if (has_title) then
+				PLATE.FULL_PLATE.TITLE.GROUP:SetDims("left:87; width:_;");
+			end
+
+			if (has_icon) then
+				PLATE.FULL_PLATE.ICON.GROUP:SetDims("right:85; width:_;");
+			end
+
+			if (has_level) then
+				PLATE.FULL_PLATE.LEVEL.GROUP:SetDims("right:" .. ((has_icon and PLATE.FULL_PLATE.ICON.GROUP:GetDims().left.offset) or 87) - 3 .. "; width:_;");
 			end
 		end
-		
-		if (status.visible) then
-			PLATE.FRAME:SetParam("prominence", PLATE.prominence);
-		else
-			PLATE.FRAME:SetParam("prominence", 0);
+
+	elseif (PLATE.style == c_Beta) then
+		local offset = 128 - (PLATE.FULL_PLATE.NAME.TEXT:GetTextDims().width
+			- ((has_dev_icon and PLATE.FULL_PLATE.DEV_ICON.GROUP:GetBounds().width) or 0)) / 2;
+
+		PLATE.FULL_PLATE.NAME.GROUP:SetDims("left:" .. offset	.. "; width:_;");
+
+		if (has_dev_icon) then
+			PLATE.FULL_PLATE.DEV_ICON.GROUP:SetDims("right:" .. offset .. "; width:_;");
+			offset = PLATE.FULL_PLATE.DEV_ICON.GROUP:GetDims().left.offset;
 		end
-	else
-		warn("Game.GetTargetStatus returned nil")
+
+		if (has_icon) then
+			PLATE.FULL_PLATE.ICON.GROUP:SetDims("right:" .. offset - 2 .. "; width:_;");
+			offset = PLATE.FULL_PLATE.ICON.GROUP:GetDims().left.offset;
+		end
+
+		if (has_level) then
+			PLATE.FULL_PLATE.LEVEL.GROUP:SetDims("right:" .. offset - 3 .. "; width:_;");
+		end
+	end
+
+	-- colors
+	PLATE.FULL_PLATE.NAME.TEXT:SetTextColor((io_ColorSettings.name == "relationship" and io_RelationshipColors[rules.relationship])
+		or (io_ColorSettings.name == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+
+	if (has_title) then
+		PLATE.FULL_PLATE.TITLE.TEXT:SetTextColor((io_ColorSettings.title == "relationship" and io_RelationshipColors[rules.relationship])
+			or (io_ColorSettings.title == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+	end
+
+	if (has_level) then
+		PLATE.FULL_PLATE.LEVEL.TEXT:SetTextColor((io_ColorSettings.level == "relationship" and io_RelationshipColors[rules.relationship])
+			or (io_ColorSettings.level == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+	end
+
+	if (has_vitals) then
+		PLATE.FULL_PLATE.VITALS.FILL:SetParam("tint", (io_ColorSettings.health_bar == "relationship" and io_RelationshipColors[rules.relationship])
+			or (io_ColorSettings.health_bar == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+	end
+
+	if (has_icon or PLATE.MAPMARKER) then
+		local icon_color = (io_ColorSettings.icon == "relationship" and io_RelationshipColors[rules.relationship])
+			or (io_ColorSettings.icon == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship]));
+
+		if (has_icon) then
+			PLATE.MIN_PLATE.ART:SetParam("tint", icon_color);
+			PLATE.FULL_PLATE.ICON.ART:SetParam("tint", icon_color);
+		end
+
+		if (PLATE.MAPMARKER) then
+			PLATE.MAPMARKER:GetIcon():SetParam("tint", icon_color);
+		end
 	end
 end
 
-function PLATE_UpdateVitals(PLATE, dur)
-	local vitals = Game.GetTargetVitals(PLATE.entityId);
-	if not vitals then
-		vitals = {};
+function PLATE_UpdateVisibility(PLATE)
+	local info = PLATE.info or {};
+	local suppression = d_suppressedEntities[PLATE.tag];	-- tag = tostring(entityId)
+	local will_show = (not info.hidden) and (suppression ~= SUPPRESS_ALL and suppression ~= SUPPRESS_HUD);
+
+	if (not will_show) then
+		-- special case: hide *GROUP* instead if this is interactable, since we need the FRAME to be visible and catch focus
+		local interactInfo = Player.GetInteracteeInfo(PLATE.entityId);
+		if (interactInfo and interactInfo.interactType) then
+			will_show = true;
+		end
 	end
-	if (PLATE.vitals.health_pct ~= vitals.health_pct and not PLATE.deferred) then
+	
+	PLATE.FRAME:Show(will_show);
+end
+
+function PLATE_UpdateVitals(PLATE, dur)
+	local vitals = Game.GetTargetVitals(PLATE.entityId) or {};
+	local has_vitals = (vitals.MaxHealth ~= nil and vitals.MaxHealth ~= 0);
+
+	if (PLATE.info and (has_vitals ~= PLATE.FULL_PLATE.VITALS.GROUP:IsVisible())) then
+		PLATE.FULL_PLATE.VITALS.GROUP:Show(has_vitals);
+		PLATE_UpdateLayout(PLATE);
+		PLATE_UpdateConfiguration(PLATE, 0.1);
+	end
+
+	if (PLATE.vitals.health_pct ~= vitals.health_pct) then
 		if (vitals.health_pct) then
-			local pct = math.ceil(vitals.health_pct*100);
+			local pct = math.ceil(vitals.health_pct * 100);
 			local fill_pct = math.min(100, pct);
-			
+			-- local overfill_pct = math.max(0, pct - 100);
 
+			PLATE.FULL_PLATE.VITALS.FILL:MaskMoveTo("left:_; width:" .. fill_pct .. "%", dur, 0, "ease-in");
+			PLATE.FULL_PLATE.VITALS.SHADOW:MaskMoveTo("left:_; width:" .. fill_pct .. "%", dur, 0, "ease-in");
+			PLATE.FULL_PLATE.VITALS.EMPTY:MaskMoveTo("right:_; width:" .. (100 - fill_pct) .. "%-1", dur, 0, "ease-in");
+			-- PLATE.FULL_PLATE.VITALS.OVERFILL:MaskMoveTo("left:_; width:" .. overfill_pct .. "%", dur, 0, "ease-in");
 
-
-
-
-
-			PLATE.FULL_PLATE.VITALS.FILL:MaskMoveTo("left:_; width:"..fill_pct.."%", dur, 0, "ease-in");
-			PLATE.FULL_PLATE.VITALS.EMPTY:MaskMoveTo("right:_; width:"..(100-fill_pct).."%-2", dur, 0, "ease-in");
-			if (pct >= 100 and not PLATE.info.hostile) then
-				PLATE.FULL_PLATE.VITALS.FILL:ParamTo("alpha", 0.6, dur*2);
-				PLATE.FULL_PLATE.VITALS.FILL:MoveTo("top:_; height:80%", dur);
-			else
-				PLATE.FULL_PLATE.VITALS.FILL:ParamTo("alpha", 1.0, dur);
-				PLATE.FULL_PLATE.VITALS.FILL:MoveTo("top:_; height:100%", dur);
-			end
-			
-			local overfill_pct = math.max(0, pct-100);
-			PLATE.FULL_PLATE.VITALS.OVERFILL:MaskMoveTo("left:_; width:"..overfill_pct.."%", dur, 0, "ease-in");
 			if (pct <= 100) then
 				Component.FosterWidget(PLATE.FULL_PLATE.VITALS.DELTA.GROUP, PLATE.FULL_PLATE.VITALS.FILL);
 			else
-				Component.FosterWidget(PLATE.FULL_PLATE.VITALS.DELTA.GROUP, PLATE.FULL_PLATE.VITALS.OVERFILL);
+				-- Component.FosterWidget(PLATE.FULL_PLATE.VITALS.DELTA.GROUP, PLATE.FULL_PLATE.VITALS.OVERFILL);
 			end
+
+			if (pct >= 100) then
+				if (io_HideFullHealthbars) then
+					PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 0, dur*2);
+				end
+			else
+				if (io_HideFullHealthbars) then
+					PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 1, dur);
+				end
+			end
+
 		end
 	end
 	PLATE.vitals = vitals;
 end
 
 function PLATE_AnimateHit(PLATE, damage, dur)
-	if (PLATE.vitals.health_pct and damage ~= 0 and not PLATE.deferred) then
+	if (PLATE.vitals.health_pct and damage ~= 0) then
 		local bar_pct = math.max(PLATE.vitals.health_pct, .01);
 		local delta_pct = 1;
 		if (bar_pct > 1) then
@@ -1114,98 +1498,205 @@ function PLATE_AnimateHit(PLATE, damage, dur)
 	end
 end
 
-function PLATE_UpdateMediMode(PLATE)
-	local dur = 0.2;
-	if (PLATE.inMediview) then
-		if PLATE.deferred then
-			PLATE_DeferredCreation(PLATE)
+function PLATE_UpdateStatus(PLATE, dur)
+	local status = Game.GetTargetStatus(PLATE.entityId);
+	if status then
+		PLATE.status = status;
+
+		if PLATE.MAPMARKER then
+			local ICON = PLATE.MAPMARKER:GetIcon();
+			if not isequal(PLATE.info.type, "vehicle") and (status.state == "incapacitated") then
+				PLATE.MAPMARKER.texture_override = true;
+				ICON:SetTexture("MapMarkers", "skull");
+				ICON:ParamTo("alpha", 1, dur);
+			elseif not isequal(PLATE.info.type, "vehicle") and (status.state == "dead") then
+				PLATE.MAPMARKER.texture_override = true;
+				ICON:SetTexture("MapMarkers", "skull");
+				ICON:ParamTo("alpha", 0.4, dur);
+			else
+				PLATE.MAPMARKER.texture_override = false;
+				if (PLATE.icon) then
+					SetIconVisuals(ICON, PLATE.icon)
+				end
+				ICON:ParamTo("alpha", 1, dur);
+			end
 		end
-		PLATE.FULL_PLATE.VITALS.EMPTY:MoveTo("top:_; height:100%", dur);
+
+		if (status.visible) then
+			PLATE.FRAME:SetParam("prominence", PLATE.prominence);
+		else
+			PLATE.FRAME:SetParam("prominence", 0);
+		end
 	else
-		if not PLATE.deferred then
-			PLATE.FULL_PLATE.VITALS.EMPTY:MoveTo(PLATE.FULL_PLATE.VITALS.EMPTY:GetInitialDims(), dur);
-		end
+		warn("Game.GetTargetStatus returned nil")
 	end
 end
 
 function PLATE_UpdateConfiguration(PLATE, dur)
 	-- shuffles and shows/hides elements
-	
+	local is_hostile_npc = (PLATE.info.hostile and PLATE.info.isNpc);
+	local is_other_player = (PLATE.info.type == "character" and not PLATE.info.isNpc);
 	local is_dead = (PLATE.status.state == "dead");
-	local interested = ((PLATE.focus and PLATE.status.visible) or PLATE.inMediview or (g_sinView and PLATE.icon));
+	local has_vitals = (PLATE.vitals.MaxHealth ~= nil and PLATE.vitals.MaxHealth ~= 0);
+
+	local interested = ((PLATE.focus and PLATE.status.visible) or PLATE.inMediView
+		or (g_sinView and PLATE.icon) or (io_HighVisiblity and PLATE.inHighVisRange));
 	local priority = PLATE.priority;
-	local show_vitals = (PLATE.vitals.health_pct ~= nil and not is_dead);
-	local has_vitals = (PLATE.vitals.MaxHealth ~= 0 and PLATE.vitals.MaxHealth ~= nil);
-	local show_header = (PLATE.info.name ~= nil and not is_dead);
-	local show_top_icon;
-	
+
+	local show_top_icon = (PLATE.icon and PLATE.status.inSin and not is_dead);
+	local show_header = (PLATE.info.name ~= nil and not is_dead and g_Loaded);
+	local show_title = ((g_sinView and io_ShowTitles == c_SinViewOnly) or io_ShowTitles == c_Always);
+	local show_level = (((g_sinView and io_ShowLevels == c_SinViewOnly) or io_ShowLevels == c_Always)
+		and not (io_HideLevelsForNPCs and not (is_hostile_npc or is_other_player)));
+	local show_vitals = ((PLATE.vitals.health_pct ~= nil)
+		and not (io_HideFullHealthbars and PLATE.vitals.health_pct >= 1));
+
 	if (not g_ShowHud) then
 		interested = false;
-		show_vitals = false;
+		show_top_icon = false;
 		show_header = false;
 		priority = PRIORITY_NONE;
 	end
-	
+
 	if (interested) then
 		priority = math.max(priority, PRIORITY_MEDIUM);
 	else
-		show_vitals = false;
 		show_header = false;
 	end
-	
-	local priority_setting = PRIORITY_SETTINGS[priority];
-	show_top_icon = (g_ShowHud and PLATE.icon and not show_header and PLATE.status.inSin and PLATE.status.state ~= "dead");
-	
-	local dock_to_edge = priority_setting.docks_to_edge or PLATE.inMediview;
-	PLATE.ANCHOR:LookAt("screen", dock_to_edge);
-	
-	if(g_spectating and priority >= PRIORITY_MEDIUM)then
+
+	if (g_spectating and priority >= PRIORITY_MEDIUM) then
 		show_header = true;
 		show_vitals = has_vitals;
+	end
+
+	if (show_header) then
 		show_top_icon = false;
 	end
-	
-	if PLATE.deferred then
-		if priority_setting.cull_alpha > 0 or interested then
-			PLATE_DeferredCreation(PLATE)
-		end
-	else	
-		PLATE.FULL_PLATE.VITALS.GROUP:Show(has_vitals)
-		if (show_vitals) then
-			PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 1, dur);
-		else
-			PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 0, dur);
-		end
-		
-		if (show_header) then
-			PLATE.FULL_PLATE.GROUP:ParamTo("alpha", 1, dur);
-		else
-			PLATE.FULL_PLATE.GROUP:ParamTo("alpha", 0, dur);
-		end		
+
+	local priority_setting = PRIORITY_SETTINGS[priority];
+	local dock_to_edge = (priority_setting.docks_to_edge or PLATE.inMediView);
+
+	if (not dock_to_edge and PLATE.minimized) then
+		PLATE.minimized = false;
+	elseif (dock_to_edge and not PLATE.minimized and PLATE.docked) then
+		PLATE.minimized = true;
 	end
-	
-	PLATE.FRAME:ParamTo("cullalpha", priority_setting.cull_alpha, dur);
-	
+
+	if (PLATE.minimized and io_MinimizeDockedPlates) then
+		show_level = false;
+		show_title = false;
+	end
+
 	if (show_top_icon) then
 		PLATE.MIN_PLATE.GROUP:ParamTo("alpha", 1, dur);
 	else
 		PLATE.MIN_PLATE.GROUP:ParamTo("alpha", 0, dur);
 	end
+
+	if (show_header) then
+		PLATE.FULL_PLATE.GROUP:ParamTo("alpha", 1, dur);
+	else
+		PLATE.FULL_PLATE.GROUP:ParamTo("alpha", 0, dur);
+	end
+
+	if (show_title) then
+		PLATE.FULL_PLATE.TITLE.GROUP:ParamTo("alpha", 1, dur);
+	else
+		PLATE.FULL_PLATE.TITLE.GROUP:FinishParam("alpha");
+		PLATE.FULL_PLATE.TITLE.GROUP:ParamTo("alpha", 0, dur);
+	end
+
+	if (show_level) then
+		PLATE.FULL_PLATE.LEVEL.GROUP:ParamTo("alpha", 1, dur);
+	else
+		PLATE.FULL_PLATE.LEVEL.GROUP:FinishParam("alpha");
+		PLATE.FULL_PLATE.LEVEL.GROUP:ParamTo("alpha", 0, dur);
+	end
+
+	if (show_vitals) then
+		PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 1, dur);
+	else
+		PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 0, dur);
+	end
+
+	PLATE.ANCHOR:LookAt("screen", dock_to_edge);
+	PLATE.FRAME:ParamTo("cullalpha", priority_setting.cull_alpha, dur);
 end
 
-function PLATE_UpdateVisibility(PLATE)
-	local info = PLATE.info or {};
-	local suppression = d_suppressedEntities[PLATE.tag];	-- tag = tostring(entityId)
-	local will_show = (not info.hidden) and (suppression ~= SUPPRESS_ALL and suppression ~= SUPPRESS_HUD);
+function PLATE_RecycleOut(PLATE)
+	-- dump it here
+	PLATE.ANCHOR:BindToEntity(nil);
+	PLATE.FRAME:Show(false);
 
-	PLATE.FRAME:Show(will_show);
+	w_PLATES[PLATE.tag] = nil;
+	w_ToRecycle[PLATE.tag] = nil;
+	PLATE.tag = nil;
+	PLATE.entityId = nil;
 
-	if (not will_show) then
-		-- special case: hide *GROUP* instead if this is interactable, since we need the FRAME to be visible and catch focus
-		local interactInfo = Player.GetInteracteeInfo(PLATE.entityId);
-		if (interactInfo and interactInfo.interactType) then
-			PLATE.FRAME:Show(true);
-		end
+	if (PLATE.MAPMARKER) then
+		PLATE.MAPMARKER:ShowOnWorldMap(false);
+		PLATE.MAPMARKER:ShowOnRadar(false);
+		PLATE.MAPMARKER:SetRadarEdgeMode(MapMarker.EDGE_NONE);
+		PLATE.MAPMARKER.texture_override = false;
+	end
+
+	w_RecycleBin[#w_RecycleBin+1] = PLATE;
+	if (g_lastFocusedPlate == PLATE) then
+		g_lastFocusedPlate = nil;
+	end
+end
+
+function PrepareCleanPLATE(entityId)
+	local n = #w_RecycleBin;
+	local PLATE = w_RecycleBin[n];
+	if (PLATE) then
+		w_RecycleBin[n] = nil;
+	else
+		-- create one
+		PLATE = PLATE_Construct();
+	end
+	-- initialize
+	PLATE_Init(PLATE, entityId);
+
+	return PLATE;
+end
+
+function PLATE_Finalize(PLATE)
+	if (PLATE.GROUP) then
+		Component.RemoveWidget(PLATE.GROUP);
+		PLATE.GROUP = nil;
+	end
+	if (PLATE.MAPMARKER) then
+		PLATE.MAPMARKER:Destroy();
+		PLATE.MAPMARKER = nil;
+	end
+	if (PLATE.FRAME) then
+		Component.RemoveFrame(PLATE.FRAME);
+		PLATE.FRAME = nil;
+	end
+end
+
+function PLATE_SlowKill(PLATE, death_dur)
+	if (PLATE == nil) then
+		return;
+	end
+
+	PLATE.FRAME:ParamTo("alpha", 0, death_dur);
+	PLATE.FRAME:SetFocalMode(false);
+	PLATE.kill_start = System.GetClientTime();
+	PLATE.kill_dur = death_dur;
+
+	if PLATE.MAPMARKER then
+		PLATE.MAPMARKER:GetIcon():ParamTo("alpha", 0, death_dur);
+	end
+
+	-- move into the ToRecycle pile
+	w_PLATES[PLATE.tag] = nil;
+	assert(not w_ToRecycle[PLATE.tag], "there can only be one");
+	w_ToRecycle[PLATE.tag] = PLATE;
+
+	if (not CB2_RecyclePlates:Pending()) then
+		CB2_RecyclePlates:Schedule(PLATE.kill_dur);
 	end
 end
 
@@ -1218,99 +1709,37 @@ function MapInfo_Create()
 end
 
 function MapInfo_Update(PLATE)
-	local info = Game.GetTargetInfo(PLATE.entityId);
-	if (not info) then
-		info = {};
-	end
-	
-	EntityRules.LoadEntityInfo(info);
-	local rules = EntityRules.GetRules();
-	
-	w_MAP_INFO.rules = rules
+	local info = Game.GetTargetInfo(PLATE.entityId) or {};
+	local rules = EntityRules.GetRules(info);
+
+	w_MAP_INFO.rules = rules;
 	w_MAP_INFO.NAME:SetText(rules.name);
-	
+
 	if (rules.title) then
-		w_MAP_INFO.TITLE:Show(true);
 		w_MAP_INFO.TITLE:SetText(rules.title);
+		w_MAP_INFO.TITLE:Show(true);
 	else
 		w_MAP_INFO.TITLE:Show(false);
-		w_MAP_INFO.TITLE:SetText("");
 	end
-	
-	w_MAP_INFO.ICON:SetParam("tint", rules.relationship_color);
-	w_MAP_INFO.TITLE:SetTextColor(rules.relationship_color);
-	w_MAP_INFO.NAME:SetTextColor(rules.relationship_color);	
-	
-	SetIconVisuals(w_MAP_INFO.ICON, rules)
+
+	w_MAP_INFO.ICON:SetParam("tint", (io_ColorSettings.icon == "relationship" and io_RelationshipColors[rules.relationship])
+		or (io_ColorSettings.icon == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+
+	w_MAP_INFO.TITLE:SetTextColor((io_ColorSettings.title == "relationship" and io_RelationshipColors[rules.relationship])
+		or (io_ColorSettings.title == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+
+	w_MAP_INFO.NAME:SetTextColor((io_ColorSettings.name == "relationship" and io_RelationshipColors[rules.relationship])
+		or (io_ColorSettings.name == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+
+	SetIconVisuals(w_MAP_INFO.ICON, rules);
 end
 
 function SetIconVisuals(ICON, rules)
 	if type(rules) == "table" then
-		if rules.icon_url and not io_UseArchTypeIcon then
-			ICON:SetUrl(rules.icon_url)
+		if rules.icon_url and not io_UseArchetypeIcon then
+			ICON:SetUrl(rules.icon_url);
 		elseif rules.texture then
-			ICON:SetTexture(rules.texture, rules.region)
+			ICON:SetTexture(rules.texture, rules.region);
 		end
 	end
 end
-
-function PLATE_DeferredCreation(PLATE)
-	assert(PLATE.deferred)
-	PLATE.deferred = false
-	local TEXTURE_FRAME = Component.CreateFrame("TextureFrame")
-	local FULL_PLATE = Component.CreateWidget("full_plate", TEXTURE_FRAME);
-	
-	PLATE.TEXTURE_FRAME = TEXTURE_FRAME
-		
-	PLATE.FULL_PLATE = {
-		GROUP = PLATE.GROUP:GetChild("full_plate"),
-		LEVEL = {
-			GROUP = FULL_PLATE:GetChild("level"),
-			BG = FULL_PLATE:GetChild("level.bg"),
-			GLYPH = FULL_PLATE:GetChild("level.glyph"),
-			ARROW = FULL_PLATE:GetChild("level.level_arrow"),
-			SKULL = FULL_PLATE:GetChild("level.skull_icon"),
-		},
-		ICON = MultiArt.Create(FULL_PLATE:GetChild("header.icon")),
-		TEXT_GROUP = FULL_PLATE:GetChild("header.text"),
-		NAME = FULL_PLATE:GetChild("header.text.name"),
-		TITLE = FULL_PLATE:GetChild("header.text.title"),
-		
-		VITALS = {
-			GROUP = FULL_PLATE:GetChild("vitals"),
-			DEV = FULL_PLATE:GetChild("vitals.dev_icon"),
-			OVERFILL = FULL_PLATE:GetChild("vitals.overfill"),
-			FILL = FULL_PLATE:GetChild("vitals.fill"),
-			EMPTY = FULL_PLATE:GetChild("vitals.empty"),
-			FLASH = FULL_PLATE:GetChild("vitals.flash"),
-			DELTA = {
-				GROUP = FULL_PLATE:GetChild("vitals.delta"),
-				FILL = FULL_PLATE:GetChild("vitals.delta.fill"),
-			},
-			
-
-
-		},
-	}
-	
-	PLATE_SetupRenderTarget(PLATE)
-	
-	PLATE.vitals = {}
-	
-	PLATE_UpdateInfo(PLATE);
-	PLATE_UpdateVitals(PLATE, 0);
-	PLATE_UpdateStatus(PLATE, 0);
-	PLATE_UpdateConfiguration(PLATE, 0.1);
-	PLATE_UpdateMediMode(PLATE);	
-end
-
-function PLATE_SetupRenderTarget(PLATE)
-	if not Component.CreateRenderTarget(PLATE.tag, 512, 64, 1) then
-		error("Could not create render target for entity plate")
-	end
-	Component.SetRenderTargetRegion(PLATE.tag, 1, "full_plate", 0, 0, 512, 64) --top, left, right, bottom
-	PLATE.TEXTURE_FRAME:SetTexture(PLATE.tag, "full_plate")
-	PLATE.FULL_PLATE.GROUP:SetTexture(PLATE.tag, "full_plate")
-end
-
-

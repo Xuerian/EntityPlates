@@ -1,0 +1,33 @@
+v1.27
+ - Fixed texture errors introduced in last patch
+
+v1.26
+ - Fixed a SetText warning being thrown when spawning certain deployables
+ - Fixed an issue where every entity plate was being updated whenever your loadout changed
+ - Changed Increased Visibility drop-downs to sliders
+ - Slight performance boost due to no longer traversing the widget tree so much
+
+v1.25
+ - Added ability to switch between Beta and Modern styles
+ - Added sliders to control health threshold and max range for MediMode
+ - Removed collapsing army tags for now until I can get it to work properly
+ - Cleaned up Red5's focus routines to (hopefully) fix plates sometimes getting stuck in a visible state
+ - Improved startup code so plates aren't updated a gazillion times upon first loading
+ 
+v1.2
+ - Changed name to TuffPlates
+ - Added options for color customization
+ - Changed plate style to better match the rest of the UI
+ - Added an (experimental) option for automatic hiding of title, level, and army tag for docked plates - limited testing, turn off and /rui if you experience weirdness
+ - Changed option "Hide Levels For NPCs Without Icons" to simply "Hide Levels For NPCs"
+
+v1.1
+ - Added options to increase visibility for various entities of interest within selectable distances
+ - Added options to set whose (if any) deployables are shown in Engineer's MediView
+ - Fixed an issue where an entity's health bar would be invisible if you left map mode with the mouse cursor over its marker
+ - Sharper text due to FULL_PLATE no longer being a texture applied to the plate frame, but...
+ - ...disabled plate scaling as it looked pretty rough
+ - melder_info.ini now points to the correct thread URL (whoops)
+
+ v1.0
+ - Initial release

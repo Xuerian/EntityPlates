@@ -3,11 +3,10 @@
 -- EntityRules
 --	basic rules, like which icon/color/data to display for which entities under what circumstances
 --   by: John Su
---
+--	 modifications by: TuffGhost
 
 --[[
-
-	rules = EntityRules.GetRules()				-- get current entity rules based on cached info and status
+	rules = EntityRules.GetRules(info)				-- get entity rules based on info
 													rules = {
 														title				-- title
 														name				-- name
@@ -16,20 +15,13 @@
 														radar				-- show on radar
 														texture				-- texture of icon
 														region				-- region of icon
-														relationship_color	-- color theme of entity
-														con_color			-- consider color of the entity
+														relationship		-- relationship to player
+														stage				-- difficulty level in relation to player
 														marker_scale		-- scale of marker
 														edge_mode			-- edge mode to use (see MapMarker.EDGE_* from lib_MapMarker)
 														min_zoom
 														max_zoom
 													}
-	
-	EntityRules.LoadEntityInfo(entityInfo)		-- updates rules from provided info
-	EntityRules.LoadEntityStatus(entityStatus)	-- updates rules from provided status
-	
-	EntityRules.LoadEntityId(entityId)			-- updates rules from provided entityId (same as LoadEntityInfo + LoadEntityStatus)
-	
-
 --]]
 
 require "lib/lib_MapMarker";
@@ -48,6 +40,7 @@ local DEPLOYABLE_CATEGORIES = {
 	["Manufacturing Terminal"]	= {texture="icons", region="crafting", scale=1.5},
 	["Vending Machine"]			= {texture="icons", region="slotmachine"},
 	["Glider pad"]				= {texture="icons", region="glider"},
+	["Adventurer's Glider Pad"] = {texture="icons", region="glider"},
 	["SIN Tower"]				= {region="sin_tower", worldMap=false},
 	["Spawner"]					= {region="generic"},	-- TODO: Chosen-ify
 	["Arcporter"]				= {region="generic"},
@@ -92,46 +85,24 @@ local TITLE_ID_CATEGORIES = {
 	["138"]				= {region="business"},	-- "Omnidyne Vendor"
 	["315"]				= {region="business"},	-- "Rep Vendors"
 	["276"]				= {region="business"},	-- "Pilot Token Vendor"
-	["420"]				= {region="business"},	-- "Specialty Goods"
-	["421"]				= {region="business"},	-- "Weapon and Ability Modules"
-	["422"]				= {region="business"},	-- "Campaign Equipment"
 	
 	["174"]				= {region="mystery"},	-- "Infobot"
 }
 
-local COLOR_FRIENDLY = Component.LookupColor("friendly");
-local COLOR_HOSTILE = Component.LookupColor("hostile");
-local COLOR_NEUTRAL = Component.LookupColor("neutral");
-local COLOR_NPC = Component.LookupColor("npc");
-local COLOR_SQUAD = Component.LookupColor("squad");
-local COLOR_PLATOON = Component.LookupColor("platoon");
-local COLOR_ARMY = Component.LookupColor("army");
-local COLOR_ME = Component.LookupColor("me");
-
-local g_entityInfo;
-local g_entityStatus;
+local FRIENDLY = "friendly";
+local HOSTILE = "hostile";
+local NEUTRAL = "neutral";
+local NPC = "npc";
+local SQUAD = "squad";
+local PLATOON = "platoon";
+local ARMY = "army";
+local ME = "me";
 
 local GetNonNil;
 
 EntityRules = {};
 
-function EntityRules.LoadEntityId(entityId)
-	EntityRules.LoadEntityInfo(Game.GetTargetInfo(entityId));
-	EntityRules.LoadEntityStatus(Game.GetTargetStatus(entityId));
-end
-
-function EntityRules.LoadEntityInfo(info)
-	g_entityInfo = info;
-end
-
-function EntityRules.LoadEntityStatus(status)
-	g_entityStatus = status;
-end
-
-function EntityRules.GetRules()
-	local info = g_entityInfo;
-	local status = g_entityStatus;
-	
+function EntityRules.GetRules(info)
 	local myTargetId = Player.GetTargetId();
 	local myTeamId = Player.GetTeamId();
 	local my_effective_level = Player.GetEffectiveLevel();
@@ -148,52 +119,49 @@ function EntityRules.GetRules()
 	-- labels
 	local title = info.title;
 	local name = info.name;
-
-	if (info.ownerName and not title) then
-		-- the owner is the title!
-		title = info.ownerName;
-	elseif (info.ownerId and not title) then
+	
+	if (info.ownerId and not title) then
 		-- the owner is the title!
 		local ownerInfo = Game.GetTargetInfo(info.ownerId);
 		if (ownerInfo and not ownerInfo.isNpc and not ownerInfo.deployableType) then
 			title = ownerInfo.name;
 		end
 	end
-	
-	-- relationship color
-	local relationship_color = COLOR_NEUTRAL;
-	local con_color
+
+	-- relationship
+	local relationship = NEUTRAL;
+	local stage;
 	if info.ownerId and isequal(info.ownerId, myTargetId) then
-		relationship_color = COLOR_ME;
+		relationship = ME;
 	elseif hostile then
-		relationship_color = COLOR_HOSTILE;
+		relationship = HOSTILE;
 		local level = info.level
 		if info.effective_level and info.effective_level > 0 then
 			level = info.effective_level
 		end
-		con_color = ConColor.GetColor(level, my_effective_level)
+		stage = ConColor.GetStage(level, my_effective_level);
 	elseif info.squad_member then
 		if Platoon.IsInPlatoon() then
-			relationship_color = COLOR_PLATOON;
+			relationship = PLATOON;
 		else
-			relationship_color = COLOR_SQUAD;
+			relationship = SQUAD;
 		end
 	elseif info.army_member then
-		relationship_color = COLOR_ARMY;
+		relationship = ARMY;
 	else
 		if (info.faction ~= "neutral") then
 			if (info.isNpc) then
-				relationship_color = COLOR_NPC;
+				relationship = NPC;
 			elseif (not info.deployableType) then
-				relationship_color = COLOR_FRIENDLY;
+				relationship = FRIENDLY;
 			end
 		else
-			relationship_color = COLOR_NEUTRAL;
+			relationship = NEUTRAL;
 			local level = info.level
 			if info.effective_level and info.effective_level > 0 then
 				level = info.effective_level
 			end
-			con_color = ConColor.GetColor(level, my_effective_level)
+			stage = ConColor.GetStage(level, my_effective_level);
 		end
 	end
 	
@@ -294,31 +262,28 @@ function EntityRules.GetRules()
 		max_zoom = MapMarker.ZOOM_MAX;
 	end
 	
-	if use_icon and not icon_url and not Component.GetTextureInfo(texture, region) then
-		
-
-
+	if not icon_url and not Component.GetTextureInfo(texture, region) then
+		warn("Texture file: '"..tostring(texture).."' does not have a region of '"..tostring(region).."'")
 		use_icon = false
 		region = nil
 	end
 	
 	return {
-		title = title,
 		name = name or "",
+		title = title,
 		use_icon = use_icon,
 		worldmap = worldmap,
 		radar = radar,
 		icon_url = icon_url,
 		texture = texture,
 		region = region,
-		relationship_color = relationship_color,
-		con_color = con_color or relationship_color,
+		relationship = relationship,
+		stage = stage,
 		edge_mode = edge_mode,
 		min_zoom = min_zoom,
 		max_zoom = max_zoom,
 		marker_scale = marker_scale,
 		hostile = hostile,
-		isDev = info.isDev,
 	};
 end
 
