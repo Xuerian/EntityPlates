@@ -1217,6 +1217,14 @@ function PLATE_Init(PLATE, entityId)
 	return PLATE;
 end
 
+local function ElementColor(element_name, rules)
+	local setting = io_ColorSettings[element_name]
+	if setting == "relationship" then
+		return io_RelationshipColors[rules.relationship]
+	elseif setting == "stage" then
+		return io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship]
+	end 
+end
 function PLATE_UpdateInfo(PLATE)
 	local info = Game.GetTargetInfo(PLATE.entityId) or {};
 	local rules = EntityRules.GetRules(info);
@@ -1381,27 +1389,23 @@ function PLATE_UpdateLayout(PLATE)
 	end
 
 	-- colors
-	PLATE.FULL_PLATE.NAME.TEXT:SetTextColor((io_ColorSettings.name == "relationship" and io_RelationshipColors[rules.relationship])
-		or (io_ColorSettings.name == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+	local name_color = ElementColor("name", rules)
+	PLATE.FULL_PLATE.NAME.TEXT:SetTextColor(name_color)
 
 	if (has_title) then
-		PLATE.FULL_PLATE.TITLE.TEXT:SetTextColor((io_ColorSettings.title == "relationship" and io_RelationshipColors[rules.relationship])
-			or (io_ColorSettings.title == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+		PLATE.FULL_PLATE.TITLE.TEXT:SetTextColor(ElementColor("title", rules));
 	end
 
 	if (has_level) then
-		PLATE.FULL_PLATE.LEVEL.TEXT:SetTextColor((io_ColorSettings.level == "relationship" and io_RelationshipColors[rules.relationship])
-			or (io_ColorSettings.level == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+		PLATE.FULL_PLATE.LEVEL.TEXT:SetTextColor(ElementColor("level", rules));
 	end
 
 	if (has_vitals) then
-		PLATE.FULL_PLATE.VITALS.FILL:SetParam("tint", (io_ColorSettings.health_bar == "relationship" and io_RelationshipColors[rules.relationship])
-			or (io_ColorSettings.health_bar == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship])));
+		PLATE.FULL_PLATE.VITALS.FILL:SetParam("tint", ElementColor("health_bar", rules));
 	end
 
 	if (has_icon or PLATE.MAPMARKER) then
-		local icon_color = (io_ColorSettings.icon == "relationship" and io_RelationshipColors[rules.relationship])
-			or (io_ColorSettings.icon == "stage" and (io_StageColors[rules.stage] or io_RelationshipColors[rules.relationship]));
+		local icon_color = ElementColor("icon", rules);
 
 		if (has_icon) then
 			PLATE.MIN_PLATE.ART:SetParam("tint", icon_color);
