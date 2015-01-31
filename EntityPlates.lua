@@ -1455,22 +1455,19 @@ function PLATE_UpdateVitals(PLATE, dur)
 			PLATE.FULL_PLATE.VITALS.EMPTY:MaskMoveTo("right:_; width:" .. (100 - fill_pct) .. "%-1", dur, 0, "ease-in");
 			-- PLATE.FULL_PLATE.VITALS.OVERFILL:MaskMoveTo("left:_; width:" .. overfill_pct .. "%", dur, 0, "ease-in");
 
-			if (pct <= 100) then
+			if (vitals.health_pct <= 1) then
 				Component.FosterWidget(PLATE.FULL_PLATE.VITALS.DELTA.GROUP, PLATE.FULL_PLATE.VITALS.FILL);
 			else
 				-- Component.FosterWidget(PLATE.FULL_PLATE.VITALS.DELTA.GROUP, PLATE.FULL_PLATE.VITALS.OVERFILL);
 			end
 
-			if (pct >= 100) then
-				if (io_HideFullHealthbars) then
+			if (io_HideFullHealthbars) then
+				if (vitals.health_pct >= 1) then
 					PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 0, dur*2);
-				end
-			else
-				if (io_HideFullHealthbars) then
+				else
 					PLATE.FULL_PLATE.VITALS.GROUP:ParamTo("alpha", 1, dur);
 				end
 			end
-
 		end
 	end
 	PLATE.vitals = vitals;
